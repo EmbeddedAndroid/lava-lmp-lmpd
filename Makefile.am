@@ -1,0 +1,29 @@
+bin_PROGRAMS=lmpd
+lmpd_SOURCES=main.c
+lmpd_CFLAGS=-fPIC -Wall -Werror -D_FORTIFY_SOURCE=2 -fstack-protector -std=gnu99 -pedantic -DINSTALL_DATADIR=\"${datarootdir}\"
+lmpd_LDFLAGS=-fPIC
+lmpd_LDADD=-lwebsockets
+
+#
+# cook a random test cert and key
+# notice your real cert and key will want to be 0600 permissions
+#
+lmpd.pem mp.key.pem:
+	printf "GB\nErewhon\nAll around\naepd-test-cert\n\nlocalhost\nnone@invalid.org\n" | \
+	openssl req -new -newkey rsa:1024 -days 10000 -nodes -x509 -keyout \
+	./lmpd.key.pem -out ./lmpd.pem >/dev/null 2>&1  && \
+	chmod 644 	./lmpd.key.pem \
+			./lmpd.pem
+
+clean-local:
+	rm -f ./lmpd.key.pem ./lmpd.pem
+
+EXTRA_INSTALL=share/index.html share/favicon.ico
+
+install-data-local: lmpd.pem lmpd.key.pem
+	mkdir -p $(DESTDIR)$(datadir)/aepd
+	cp $(EXTRA_INSTALL) \
+	   aepd.pem \
+	   aepd.key.pem \
+		$(DESTDIR)$(datadir)/lmpd
+

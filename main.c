@@ -50,10 +50,10 @@ struct serveable {
 
 static const struct serveable whitelist[] = {
 	{ "/favicon.ico", "image/x-icon" },
-	{ "/libwebsockets.org-logo.png", "image/png" },
+	{ "/lmp-logo.png", "image/png" },
 
 	/* last one is the default served if no match */
-	{ "/test.html", "text/html" },
+	{ "/index.html", "text/html" },
 };
 
 struct per_session_data__http {
