@@ -1,3 +1,4 @@
 all:
-	gcc -o lmpd main.c
+	gcc -o lmpd main.c -lwebsockets
+
 
