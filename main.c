@@ -105,7 +105,7 @@ static int callback_http(struct libwebsocket_context *context,
 	struct per_session_data__http *pss =
 				(struct per_session_data__http *)user;
 	int m;
-	int fd = (int)(long)user;
+	int fd = (int)(long)in;
 
 	switch (reason) {
 	case LWS_CALLBACK_HTTP:
@@ -350,8 +350,8 @@ int main(void)
 	/* add the netlink fd */
 
 	fd_to_type[fd] = LST_NETLINK;
-	callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
-					(void *)(long)fd, (void *)NULL, POLLIN);
+	callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD, NULL,
+					(void *)(long)fd, POLLIN);
 
 	/* provoke coldplug changes */
 	dir = opendir(coldplug_dir);
@@ -455,7 +455,8 @@ int main(void)
 					/* add us to the poll array */
 					fd_to_type[lmp[count_lmp].fd] = LST_TTYACM;
 					callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
-						(void *)(long)lmp[count_lmp].fd, (void *)NULL, POLLIN);
+						NULL,
+						(void *)(long)lmp[count_lmp].fd, POLLIN);
 					/* make it official */
 					count_lmp++;
 					lwsl_notice("Added %s serial %s\n", devname, serial);
