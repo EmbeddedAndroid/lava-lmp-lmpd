@@ -29,6 +29,8 @@ static int count_pollfds;
 static char force_exit = 0;
 static char *fd_to_type;
 
+#define MAX_LMP 128
+
 enum lmpd_socket_types {
 	LST_UNKNOWN,
 	LST_NETLINK,
@@ -42,6 +44,16 @@ enum lmpd_protocols {
 	/* always last */
 	DEMO_PROTOCOL_COUNT
 };
+
+struct lmp {
+	char device_node_path[64];
+	char devpath[128];
+	char serial[64];
+	int fd;
+};
+
+static struct lmp lmp[MAX_LMP];
+static int count_lmp;
 
 struct serveable {
 	const char *urlpath;
@@ -59,6 +71,24 @@ static const struct serveable whitelist[] = {
 struct per_session_data__http {
 	int fd;
 };
+
+static int lmp_find_by_devpath(const char *devpath)
+{
+	int n;
+	int len = strlen(devpath);
+
+	/*
+	 * if the devpath of what is being removed matches the lhs of the
+	 * devpath, it's enough to mean the ancestor is removed so must the
+	 * child be
+	 */
+
+	for (n = 0; n < count_lmp; n++)
+		if (strncmp(lmp[n].devpath, devpath, len) == 0)
+			return n;
+
+	return -1;
+}
 
 /* this protocol server (always the first one) just knows how to do HTTP */
 
@@ -237,20 +267,13 @@ void sighandler(int sig)
 int main(void)
 {
 	struct sockaddr_nl nls;
-	struct sockaddr_nl sa;
-	struct nlmsghdr *nh;
 	char buf[4096];
 	int len;
-	struct iovec iov = { buf, sizeof(buf) };
-	struct msghdr msg;
 	int n;
 	int i;
 	int fd;
-	int pid;
-	char path[128];
-	char *data;
 	int relevant = 0;
-	char *devname, *action, *serial;
+	char *devname, *action, *serial, *devpath;
 	DIR *dir;
 	struct dirent *dirent;
 	const char *coldplug_dir = "/sys/class/tty/";
@@ -264,7 +287,7 @@ int main(void)
 	info.port = 7681;
 
 	/* tell the library what debug level to emit and to send it to syslog */
-	lws_set_log_level(debug_level, lwsl_emit_syslog);
+	lws_set_log_level(debug_level, NULL /*lwsl_emit_syslog*/);
 
 	lwsl_notice("lmpd - (C) Copyright 2013 "
 			"Andy Green <andy.green@linaro.org> - "
@@ -377,6 +400,7 @@ int main(void)
 					continue;
 				}
 
+				devpath = NULL;
 				relevant = 0;
 				i = 0;
 				while (i < len) {
@@ -385,6 +409,10 @@ int main(void)
 					if (!strncmp(&buf[i], "ACTION=", 7)) {
 						relevant++;
 						action = &buf[i + 7];
+					}
+					if (!strncmp(&buf[i], "DEVPATH=", 8)) {
+						relevant++;
+						devpath = &buf[i + 8];
 					}
 					if (!strncmp(&buf[i], "DEVNAME=", 8)) {
 						if (strstr(&buf[i], "ttyACM")) {
@@ -397,12 +425,49 @@ int main(void)
 						serial = &buf[i + 16];
 					}
 
-		//			fprintf(stderr, "tok %s\n", buf + i);
+//					fprintf(stderr, "tok %s\n", buf + i);
 					i += strlen(buf + i) + 1;
 				}
 
-				if (relevant == 4) {
-					fprintf(stderr, "%s %s %s\n", action, devname, serial);
+				if (!devpath)
+					break;
+				i = lmp_find_by_devpath(devpath);
+				if (relevant == 5 && (!strcmp(action, "add") || !strcmp(action, "change"))) {
+					if (i >= 0)
+						break;
+					/* create the struct lmp */
+					if (count_lmp == sizeof(lmp) / sizeof(lmp[0])) {
+						lwsl_err("Can't cope with any more lmp\n");
+						break;
+					}
+					strncpy(lmp[count_lmp].devpath, devpath, sizeof lmp[count_lmp].devpath);
+					lmp[count_lmp].devpath[sizeof(lmp[count_lmp].devpath) - 1] = '\0';
+					strncpy(lmp[count_lmp].device_node_path, devname, sizeof lmp[count_lmp].device_node_path);
+					lmp[count_lmp].device_node_path[sizeof(lmp[count_lmp].device_node_path) - 1] = '\0';
+					strncpy(lmp[count_lmp].serial, serial, sizeof lmp[count_lmp].serial);
+					lmp[count_lmp].serial[sizeof(lmp[count_lmp].serial) - 1] = '\0';
+					/* open the device path */
+					lmp[count_lmp].fd = open(devname, O_RDWR, 0);
+					if (lmp[count_lmp].fd < 0) {
+						lwsl_err("Unable to open %s\n", devname);
+						break;
+					}
+					/* add us to the poll array */
+					fd_to_type[lmp[count_lmp].fd] = LST_TTYACM;
+					callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
+						(void *)(long)lmp[count_lmp].fd, (void *)NULL, POLLIN);
+					/* make it official */
+					count_lmp++;
+					lwsl_notice("Added %s serial %s\n", devname, serial);
+				}
+				if (relevant == 4 && !strcmp(action, "remove")) {
+					if (i >= 0) {
+						lwsl_notice("Removed %s serial %s\n", lmp[i].device_node_path, lmp[i].serial);
+						close(lmp[i].fd);
+						if (count_lmp > 1)
+							lmp[i] = lmp[count_lmp - 1];
+						count_lmp--;
+					}
 				}
 				break;
 			case LST_TTYACM:
@@ -416,7 +481,8 @@ int main(void)
 				if (libwebsocket_service_fd(context,
 							  &pollfds[n]) < 0)
 					goto done;
-			}
+				break;
+}
 		}
 
 	}
