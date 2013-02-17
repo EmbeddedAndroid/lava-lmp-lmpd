@@ -46,14 +46,14 @@ enum lmpd_protocols {
 };
 
 struct lmp {
-	char device_node_path[64];
-	char devpath[128];
+	char dev_path[64];
+	char tree_path[128];
 	char serial[64];
 	int fd;
 };
 
 static struct lmp lmp[MAX_LMP];
-static int count_lmp;
+static int nlmp;
 
 struct serveable {
 	const char *urlpath;
@@ -83,8 +83,8 @@ static int lmp_find_by_devpath(const char *devpath)
 	 * child be
 	 */
 
-	for (n = 0; n < count_lmp; n++)
-		if (strncmp(lmp[n].devpath, devpath, len) == 0)
+	for (n = 0; n < nlmp; n++)
+		if (strncmp(lmp[n].tree_path, devpath, len) == 0)
 			return n;
 
 	return -1;
@@ -193,8 +193,8 @@ static int callback_http(struct libwebsocket_context *context,
 			if (n == 0)
 				goto bail;
 			/*
-			 * because it's HTTP and not websocket, don't need to take
-			 * care about pre and postamble
+			 * because it's HTTP and not websocket, don't need to
+			 * take care about pre and postamble
 			 */
 			n = libwebsocket_write(wsi, buffer, n, LWS_WRITE_HTTP);
 			if (n < 0)
@@ -212,7 +212,7 @@ bail:
 	case LWS_CALLBACK_ADD_POLL_FD:
 
 		if (count_pollfds >= max_poll_elements) {
-			lwsl_err("LWS_CALLBACK_ADD_POLL_FD: too many sockets to track\n");
+			lwsl_err("too many sockets\n");
 			return 1;
 		}
 
@@ -247,13 +247,108 @@ bail:
 	return 0;
 }
 
+int
+lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
+{
+	char buf[4096];
+	int len;
+	int relevant = 0;
+	char *devname, *act, *serial, *devpath;
+	int i;
+
+	len = recv(pfd->fd, buf, sizeof(buf), MSG_DONTWAIT);
+	if (len <= 0) {
+		perror("recv\n");
+		return len;
+	}
+
+	devpath = NULL;
+	relevant = 0;
+	i = 0;
+	while (i < len) {
+		if (!strcmp(&buf[i], "ID_MODEL=LavaLMP"))
+			relevant++;
+		if (!strncmp(&buf[i], "ACTION=", 7)) {
+			relevant++;
+			act = &buf[i + 7];
+		}
+		if (!strncmp(&buf[i], "DEVPATH=", 8)) {
+			relevant++;
+			devpath = &buf[i + 8];
+		}
+		if (!strncmp(&buf[i], "DEVNAME=", 8) &&
+						    strstr(&buf[i], "ttyACM")) {
+			relevant++;
+			devname = &buf[i + 8];
+		}
+		if (!strncmp(&buf[i], "ID_SERIAL_SHORT=", 16)) {
+			relevant++;
+			serial = &buf[i + 16];
+		}
+
+//		fprintf(stderr, "tok %s\n", buf + i);
+		i += strlen(buf + i) + 1;
+	}
+
+	if (!devpath)
+		return 0;
+
+	i = lmp_find_by_devpath(devpath);
+	if (relevant == 5 && (!strcmp(act, "add") || !strcmp(act, "change"))) {
+		if (i >= 0)
+			return 0;
+		/* create the struct lmp */
+		if (nlmp == sizeof(lmp) / sizeof(lmp[0])) {
+			lwsl_err("Too many lmp\n");
+			return 0;
+		}
+		strncpy(lmp[nlmp].tree_path, devpath,
+					 sizeof lmp[nlmp].tree_path);
+		lmp[nlmp].tree_path[sizeof(lmp[nlmp].tree_path) - 1] = '\0';
+		strncpy(lmp[nlmp].dev_path, devname, sizeof lmp[nlmp].dev_path);
+		lmp[nlmp].dev_path[sizeof(lmp[nlmp].dev_path) - 1] = '\0';
+		strncpy(lmp[nlmp].serial, serial, sizeof lmp[nlmp].serial);
+		lmp[nlmp].serial[sizeof(lmp[nlmp].serial) - 1] = '\0';
+
+		/* open the device path */
+		lmp[nlmp].fd = open(devname, O_RDWR, 0);
+		if (lmp[nlmp].fd < 0) {
+			lwsl_err("Unable to open %s\n", devname);
+			return 0;
+		}
+		/* add us to the poll array */
+		fd_to_type[lmp[nlmp].fd] = LST_TTYACM;
+		callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
+				      NULL, (void *)(long)lmp[nlmp].fd, POLLIN);
+		/* make it official */
+		nlmp++;
+		lwsl_notice("Added %s serial %s\n", devname, serial);
+	}
+	if (relevant == 4 && !strcmp(act, "remove")) {
+		if (i < 0)
+			return 0;
+		lwsl_notice("Removed %s serial %s\n",
+				lmp[i].dev_path, lmp[i].serial);
+		fd_to_type[lmp[nlmp].fd] = LST_TTYACM;
+		callback_http(NULL, NULL, LWS_CALLBACK_DEL_POLL_FD,
+			      NULL, (void *)(long)lmp[nlmp].fd, 0);
+
+		close(lmp[i].fd);
+		if (nlmp > 1)
+			lmp[i] = lmp[nlmp - 1];
+		nlmp--;
+	}
+
+	return 0;
+}
+
 static struct libwebsocket_protocols protocols[] = {
 	/* first protocol must always be HTTP handler */
 
 	{
 		"http-only",		/* name */
 		callback_http,		/* callback */
-		sizeof (struct per_session_data__http),	/* per_session_data_size */
+		sizeof (struct per_session_data__http),	/* per_session_data */
 		0,			/* max frame size / rx buffer */
 	},
 };
@@ -267,13 +362,9 @@ void sighandler(int sig)
 int main(void)
 {
 	struct sockaddr_nl nls;
-	char buf[4096];
-	int len;
-	int n;
-	int i;
+	char buf[256];
+	int n, m;
 	int fd;
-	int relevant = 0;
-	char *devname, *action, *serial, *devpath;
 	DIR *dir;
 	struct dirent *dirent;
 	const char *coldplug_dir = "/sys/class/tty/";
@@ -292,7 +383,6 @@ int main(void)
 	lwsl_notice("lmpd - (C) Copyright 2013 "
 			"Andy Green <andy.green@linaro.org> - "
 						    "licensed under GPL3\n");
-
 	signal(SIGINT, sighandler);
 
 	max_poll_elements = getdtablesize();
@@ -351,139 +441,71 @@ int main(void)
 
 	fd_to_type[fd] = LST_NETLINK;
 	callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD, NULL,
-					(void *)(long)fd, POLLIN);
+						      (void *)(long)fd, POLLIN);
 
 	/* provoke coldplug changes */
 	dir = opendir(coldplug_dir);
 	if (!dir) {
 		fprintf(stderr, "Unable to open coldplug dir\n");
-	} else {
-		while (1) {
-			dirent = readdir(dir);
-			if (!dirent)
-				break;
-			if (!strstr(dirent->d_name, "ttyACM"))
-				continue;
-			sprintf(buf, "%s/%s/uevent", coldplug_dir, dirent->d_name);
-			fd = open(buf, O_RDWR, 0);
-			if (fd > 0) {
-				// fprintf(stderr, "changing %s\n", dirent->d_name);
-
-				if (write(fd, "change", 6) != 6) {
-					fprintf(stderr, "write failed\n");
-					break;
-				}
-				close(fd);
-			} else
-				fprintf(stderr, "unable to open %s: %s\n", buf, strerror(errno));
-		}
+		goto post_coldplug;
 	}
 
-	n = 0;
-	while (n >= 0 && !force_exit) {
-		n = poll(pollfds, count_pollfds, 50);
-		if (n <= 0)
+	/* prod all the ttyACMs so we will hear about them */
+
+	while (1) {
+		dirent = readdir(dir);
+		if (!dirent)
+			break;
+		if (!strstr(dirent->d_name, "ttyACM"))
+			continue;
+		sprintf(buf, "%s/%s/uevent", coldplug_dir, dirent->d_name);
+		fd = open(buf, O_RDWR, 0);
+		if (fd > 0) {
+			// fprintf(stderr, "changing %s\n", dirent->d_name);
+
+			if (write(fd, "change", 6) != 6) {
+				fprintf(stderr, "write failed\n");
+				break;
+			}
+			close(fd);
+		} else
+			fprintf(stderr, "unable to open %s: %s\n",
+						  buf, strerror(errno));
+	}
+post_coldplug:
+
+	/*
+	 * service loop
+	 */
+	m = 0;
+	while (m >= 0 && !force_exit) {
+		m = poll(pollfds, count_pollfds, 50);
+		if (m <= 0)
 			continue;
 		for (n = 0; n < count_pollfds; n++) {
 			if (!pollfds[n].revents)
 				continue;
 			switch (fd_to_type[pollfds[n].fd]) {
 			case LST_NETLINK:
-
 				if (!(pollfds[n].revents & POLLIN))
-					continue;
+					return 0;
 
-				len = recv(pollfds[n].fd, buf, sizeof(buf),
-								  MSG_DONTWAIT);
-				if (len <= 0) {
-					perror("recv\n");
-					continue;
-				}
-
-				devpath = NULL;
-				relevant = 0;
-				i = 0;
-				while (i < len) {
-					if (!strcmp(&buf[i], "ID_MODEL=LavaLMP"))
-						relevant++;
-					if (!strncmp(&buf[i], "ACTION=", 7)) {
-						relevant++;
-						action = &buf[i + 7];
-					}
-					if (!strncmp(&buf[i], "DEVPATH=", 8)) {
-						relevant++;
-						devpath = &buf[i + 8];
-					}
-					if (!strncmp(&buf[i], "DEVNAME=", 8)) {
-						if (strstr(&buf[i], "ttyACM")) {
-							relevant++;
-							devname = &buf[i + 8];
-						}
-					}
-					if (!strncmp(&buf[i], "ID_SERIAL_SHORT=", 16)) {
-						relevant++;
-						serial = &buf[i + 16];
-					}
-
-//					fprintf(stderr, "tok %s\n", buf + i);
-					i += strlen(buf + i) + 1;
-				}
-
-				if (!devpath)
-					break;
-				i = lmp_find_by_devpath(devpath);
-				if (relevant == 5 && (!strcmp(action, "add") || !strcmp(action, "change"))) {
-					if (i >= 0)
-						break;
-					/* create the struct lmp */
-					if (count_lmp == sizeof(lmp) / sizeof(lmp[0])) {
-						lwsl_err("Can't cope with any more lmp\n");
-						break;
-					}
-					strncpy(lmp[count_lmp].devpath, devpath, sizeof lmp[count_lmp].devpath);
-					lmp[count_lmp].devpath[sizeof(lmp[count_lmp].devpath) - 1] = '\0';
-					strncpy(lmp[count_lmp].device_node_path, devname, sizeof lmp[count_lmp].device_node_path);
-					lmp[count_lmp].device_node_path[sizeof(lmp[count_lmp].device_node_path) - 1] = '\0';
-					strncpy(lmp[count_lmp].serial, serial, sizeof lmp[count_lmp].serial);
-					lmp[count_lmp].serial[sizeof(lmp[count_lmp].serial) - 1] = '\0';
-					/* open the device path */
-					lmp[count_lmp].fd = open(devname, O_RDWR, 0);
-					if (lmp[count_lmp].fd < 0) {
-						lwsl_err("Unable to open %s\n", devname);
-						break;
-					}
-					/* add us to the poll array */
-					fd_to_type[lmp[count_lmp].fd] = LST_TTYACM;
-					callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
-						NULL,
-						(void *)(long)lmp[count_lmp].fd, POLLIN);
-					/* make it official */
-					count_lmp++;
-					lwsl_notice("Added %s serial %s\n", devname, serial);
-				}
-				if (relevant == 4 && !strcmp(action, "remove")) {
-					if (i >= 0) {
-						lwsl_notice("Removed %s serial %s\n", lmp[i].device_node_path, lmp[i].serial);
-						close(lmp[i].fd);
-						if (count_lmp > 1)
-							lmp[i] = lmp[count_lmp - 1];
-						count_lmp--;
-					}
-				}
+				if (lmpd_service_netlink(context, &pollfds[n]))
+					goto done;
 				break;
 			case LST_TTYACM:
 				break;
 			default:
 				/*
-				* returns immediately if the fd does not
-				* match anything under libwebsockets
-				* control
-				*/
+				 * returns immediately if the fd does not
+				 * match anything under libwebsockets
+				 * control
+				 */
 				if (libwebsocket_service_fd(context,
-							  &pollfds[n]) < 0)
+							       &pollfds[n]) < 0)
 					goto done;
 				break;
-}
+			}
 		}
 
 	}
