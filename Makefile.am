@@ -1,5 +1,5 @@
 bin_PROGRAMS=lmpd
-lmpd_SOURCES=main.c
+lmpd_SOURCES=main.c http.c netlink.c websocket.c
 lmpd_CFLAGS=-fPIC -Wall -Werror -D_FORTIFY_SOURCE=2 -fstack-protector -std=gnu99 -pedantic -DINSTALL_DATADIR=\"${datarootdir}\"
 lmpd_LDFLAGS=-fPIC
 lmpd_LDADD=-lwebsockets
