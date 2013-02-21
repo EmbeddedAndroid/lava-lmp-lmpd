@@ -18,7 +18,16 @@ lmpd.pem mp.key.pem:
 clean-local:
 	rm -f ./lmpd.key.pem ./lmpd.pem
 
-EXTRA_INSTALL=share/index.html share/favicon.ico share/lmp-logo.png
+EXTRA_INSTALL=share/index.html share/favicon.ico \
+	share/lmp-logo.png \
+	share/HDMI.png \
+	share/USB-minib.png \
+	share/USB-A.png \
+	share/SD.png \
+	share/uSD.png \
+	share/undefined.png \
+	share/jack4.png \
+	share/bus8.png
 
 install-data-local: lmpd.pem lmpd.key.pem
 	mkdir -p $(DESTDIR)$(datadir)/lmpd

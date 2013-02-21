@@ -5,10 +5,13 @@
  <title>Minimal Websocket test app</title>
 <style type="text/css">
 	div.title { font-size:18pt; font: Arial; font-weight:normal; text-align:center; color:#000000; }
+	.type { font-size:12pt; font: Arial; font-weight:bold; text-align:center; color:#000000; }
+	.meas { font-size:9pt; font: Arial; font-weight:normal; text-align:center; color:#000000; }
 	.browser { font-size:18pt; font: Arial; font-weight:normal; text-align:center; color:#ffff00; vertical-align:middle; text-align:center; background:#d0b070; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px;}
 	.group2 { width:600px; vertical-align:middle; text-align:center; background:#f0f0e0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
 	.explain { vertical-align:middle; text-align:center; background:#f0f0c0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; color:#404000; }
-	.content { vertical-align:top; text-align:center; background:#fffff0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
+	.content { vertical-align:top; text-align:center; background:#fffff0; padding:4px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
+	.btitle { font-size:10pt; font: Arial; font-weight:normal; text-align:center; color:#404040; vertical-align:top; text-align:center; background:#dfeff0; padding:2px; -webkit-border-radius:6px; -moz-border-radius:4px; border-radius:4px; }
 	.canvas { vertical-align:top; text-align:center; background:#efefd0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
 </style>
 </head>
@@ -19,198 +22,37 @@
 
 <table><tr><td>
 
-<table width="100%"><tr><td valign=middle align=center><a href="http://libwebsockets.org"><img src="/lmp-logo.png"></a></td><td>
-<section class="browser">Detected Browser: <div id=brow>...</div></section></td></tr></table>
+<table width="100%"><tr>
+	<td valign=middle align=left><a href="http://libwebsockets.org"><img src="/lmp-logo.png"></a></td>
+	<td>
+	</td>
+</tr></table>
 
 </td></tr><tr><td>
 
 <section id="increment" class="group2">
-<div class="title">libwebsockets "dumb-increment-protocol"</div>
+<div class="title">Boards</div>
 <table><tr><td>
-<table class="content" width="200px">
-		<tr><td align=center><input type=button id=offset value="Reset counter" onclick="reset();" ></td></tr>
-		<tr><td width=200px align=center><div id=number> </div></td></tr>
-		<tr><td id=wsdi_statustd align=center class="explain"><div id=wsdi_status>Not initialized</div></td></tr>
-	</tr>
-</table>
-</td><td class="explain">
-The incrementing number is coming from the server and is individual for
-each connection to the server... try opening a second browser window.
-<br/><br/>
-The button zeros just this connection's number.
-<br/><br/>
-Click <a href="/leaf.jpg" target="_blank">Here</a> to have the test server send a big picture by http.
+	<section id="boards">
+	</section>
 </td></tr></table>
 </section>
 <br>
-<section id="mirror" class="group2">
-<div class="title">libwebsockets "lws-mirror-protocol"</div>
-<div class="explain">
-Use the mouse to draw on the canvas below -- all other browser windows open
-on this page see your drawing in realtime and you can see any of theirs as
-well.
-<br/><br/>
-The lws-mirror protocol doesn't interpret what is being sent to it, it just
-re-sends it to every other websocket it has a connection with using that
-protocol, including the guy who sent the packet.
-<br/><br/>
-<b>libwebsockets-test-client</b> joins in by spamming circles on to this shared canvas when
-run.
-</div>
-<table class="content">
-	<tr>
-		<td>Drawing color:
-		<select id="color" onchange="update_color();">
-			<option value=#000000>Black</option>
-			<option value=#0000ff>Blue</option>
-			<option value=#20ff20>Green</option>
-			<option value=#802020>Dark Red</option>
-		</select>
-		</td>
-		<td id=wslm_statustd align=center class="explain"><div id=wslm_status>Not initialized</div></td>
-	</tr>
-	<tr>
-		<td colspan=2 width=500 class="content">
-		<div id="wslm_drawing">
-		</div></td>
-	</tr>
+</td></tr>
+<tr><td><div id="debug">...</div>
+</td></tr>
 </table>
-</section>
-
-</td></tr><tr><td>
-Looking for support? <a href="http://libwebsockets.org">http://libwebsockets.org</a><br/>
-Join the mailing list: ​<a href="http://ml.libwebsockets.org/mailman/listinfo/libwebsockets">http://ml.libwebsockets.org/mailman/listinfo/libwebsockets</a>
-
-</td></tr></table>
 
 </article>
 
 <script>
 
-/* BrowserDetect came from http://www.quirksmode.org/js/detect.html */
+var connection = 0;
 
-var BrowserDetect = {
-	init: function () {
-		this.browser = this.searchString(this.dataBrowser) || "An unknown browser";
-		this.version = this.searchVersion(navigator.userAgent)
-			|| this.searchVersion(navigator.appVersion)
-			|| "an unknown version";
-		this.OS = this.searchString(this.dataOS) || "an unknown OS";
-	},
-	searchString: function (data) {
-		for (var i=0;i<data.length;i++)	{
-			var dataString = data[i].string;
-			var dataProp = data[i].prop;
-			this.versionSearchString = data[i].versionSearch || data[i].identity;
-			if (dataString) {
-				if (dataString.indexOf(data[i].subString) != -1)
-					return data[i].identity;
-			}
-			else if (dataProp)
-				return data[i].identity;
-		}
-	},
-	searchVersion: function (dataString) {
-		var index = dataString.indexOf(this.versionSearchString);
-		if (index == -1) return;
-		return parseFloat(dataString.substring(index+this.versionSearchString.length+1));
-	},
-	dataBrowser: [
-		{
-			string: navigator.userAgent,
-			subString: "Chrome",
-			identity: "Chrome"
-		},
-		{ 	string: navigator.userAgent,
-			subString: "OmniWeb",
-			versionSearch: "OmniWeb/",
-			identity: "OmniWeb"
-		},
-		{
-			string: navigator.vendor,
-			subString: "Apple",
-			identity: "Safari",
-			versionSearch: "Version"
-		},
-		{
-			prop: window.opera,
-			identity: "Opera",
-			versionSearch: "Version"
-		},
-		{
-			string: navigator.vendor,
-			subString: "iCab",
-			identity: "iCab"
-		},
-		{
-			string: navigator.vendor,
-			subString: "KDE",
-			identity: "Konqueror"
-		},
-		{
-			string: navigator.userAgent,
-			subString: "Firefox",
-			identity: "Firefox"
-		},
-		{
-			string: navigator.vendor,
-			subString: "Camino",
-			identity: "Camino"
-		},
-		{		// for newer Netscapes (6+)
-			string: navigator.userAgent,
-			subString: "Netscape",
-			identity: "Netscape"
-		},
-		{
-			string: navigator.userAgent,
-			subString: "MSIE",
-			identity: "Explorer",
-			versionSearch: "MSIE"
-		},
-		{
-			string: navigator.userAgent,
-			subString: "Gecko",
-			identity: "Mozilla",
-			versionSearch: "rv"
-		},
-		{ 		// for older Netscapes (4-)
-			string: navigator.userAgent,
-			subString: "Mozilla",
-			identity: "Netscape",
-			versionSearch: "Mozilla"
-		}
-	],
-	dataOS : [
-		{
-			string: navigator.platform,
-			subString: "Win",
-			identity: "Windows"
-		},
-		{
-			string: navigator.platform,
-			subString: "Mac",
-			identity: "Mac"
-		},
-		{
-			   string: navigator.userAgent,
-			   subString: "iPhone",
-			   identity: "iPhone/iPod"
-	    },
-		{
-			string: navigator.platform,
-			subString: "Linux",
-			identity: "Linux"
-		}
-	]
+grayOut(true,{'zindex':'499'});
+conn_retry();
 
-};
-BrowserDetect.init();
-
-document.getElementById("brow").textContent = " " + BrowserDetect.browser + " "
-	+ BrowserDetect.version +" " + BrowserDetect.OS +" ";
-
-	var pos = 0;
+var pos = 0;
 
 function get_appropriate_ws_url()
 {
@@ -237,158 +79,232 @@ function get_appropriate_ws_url()
 }
 
 
-document.getElementById("number").textContent = get_appropriate_ws_url();
 
-/* dumb increment protocol */
+/* lmpd protocol */
 	
 	var socket_di;
+//	var jdoc;
 
-	if (typeof MozWebSocket != "undefined") {
-		socket_di = new MozWebSocket(get_appropriate_ws_url(),
-				   "dumb-increment-protocol");
-	} else {
-		socket_di = new WebSocket(get_appropriate_ws_url(),
-				   "dumb-increment-protocol");
+
+function get_if_index(iff, name)
+{
+	var n = 0;
+	while (iff[n]) {
+		if (iff[n].name == name)
+			return n;
+		n++;
 	}
-
-
-	try {
-		socket_di.onopen = function() {
-			document.getElementById("wsdi_statustd").style.backgroundColor = "#40ff40";
-			document.getElementById("wsdi_status").textContent = " websocket connection opened ";
-		} 
-
-		socket_di.onmessage =function got_packet(msg) {
-			document.getElementById("number").textContent = msg.data + "\n";
-		} 
-
-		socket_di.onclose = function(){
-			document.getElementById("wsdi_statustd").style.backgroundColor = "#ff4040";
-			document.getElementById("wsdi_status").textContent = " websocket connection CLOSED ";
-		}
-	} catch(exception) {
-		alert('<p>Error' + exception);  
-	}
-
-function reset() {
-	socket_di.send("reset\n");
+	return -1;
 }
 
+function conn_retry()
+{
 
-/* lws-mirror protocol */
-
-	var down = 0;
-	var no_last = 1;
-	var last_x = 0, last_y = 0;
-	var ctx;
-	var socket_lm;
-	var color = "#000000";
-
-	if (typeof MozWebSocket != "undefined") {
-		socket_lm = new MozWebSocket(get_appropriate_ws_url(),
-				   "lws-mirror-protocol");
-	} else {
-		socket_lm = new WebSocket(get_appropriate_ws_url(),
-				   "lws-mirror-protocol");
-	}
-
+	if (connection)
+		return;
 
 	try {
-		socket_lm.onopen = function() {
-			document.getElementById("wslm_statustd").style.backgroundColor = "#40ff40";
-			document.getElementById("wslm_status").textContent = " websocket connection opened ";
+	
+		if (typeof MozWebSocket != "undefined") {
+			socket_di = new MozWebSocket(get_appropriate_ws_url(),
+					   "wsprotocol.org.linaro.lmpd");
+		} else {
+			socket_di = new WebSocket(get_appropriate_ws_url(),
+					   "wsprotocol.org.linaro.lmpd");
+		}
+	
+		socket_di.onopen = function() {
+			grayOut(false);
+			connection = 1;
 		} 
 
-		socket_lm.onmessage =function got_packet(msg) {
-			j = msg.data.split(';');
-			f = 0;
-			while (f < j.length - 1) {
-				i = j[f].split(' ');
-				if (i[0] == 'd') {
-					ctx.strokeStyle = i[1];
-					ctx.beginPath();
-					ctx.moveTo(+(i[2]), +(i[3]));
-					ctx.lineTo(+(i[4]), +(i[5]));
-					ctx.stroke();
-				}
-				if (i[0] == 'c') {
-					ctx.strokeStyle = i[1];
-					ctx.beginPath();
-					ctx.arc(+(i[2]), +(i[3]), +(i[4]), 0, Math.PI*2, true); 
-					ctx.stroke();
-				}
+		socket_di.onmessage = function (msg) {
+			var s;
 
-				f++;
+			try {
+				jdoc = JSON.parse(msg.data);
+			} catch (exception) {
+				document.getElementById("debug").textContent = exception.name +" " + exception.message + " \'" + msg.data + "\'";
+				return;
+			}
+			if (jdoc.schema == "org.linaro.lmp.boardlist") {
+				s = "<table>";
+				for (n = 0; jdoc.boards[n]; n++) {
+					s += "<tr><td class=\"content\">";
+					s += "<table width=\"100%\"><tr><td colspan=\"3\" class=\"btitle\"><table width=\"100%\"><tr><td class=\"type\">"
+					s += jdoc.boards[n].type + "</td><td>" + jdoc.boards[n].serial + "</td><td>[id]</td></tr></table>";
+					s += "</td><tr><td>";
+					if (jdoc.boards[n].io) {
+						for (y = 0; jdoc.boards[n].io[y]; y++) {
+							if (jdoc.boards[n].io[y].grp == 0) {
+								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
+								s += "<tr><td>"+jdoc.boards[n].io[y].name;
+								
+								q = get_if_index(jdoc.boards[n].if, jdoc.boards[n].io[y].if);
+								if (q >= 0 && jdoc.boards[n].if[q].pins) {
+									z = 0; while (jdoc.boards[n].if[q].pins[z])
+										s += "<span class=\"meas\" id=\"rep."+jdoc.boards[n].serial+"."+jdoc.boards[n].io[y].name+"."+jdoc.boards[n].if[q].pins[z++] + "\"></span>";
+								}
+								s += "</td></tr></table>";
+							}
+						}
+					}
+					s += "</td><td width=\"90%\">";
+					if (jdoc.boards[n].int) {
+						for (y = 0; jdoc.boards[n].int[y]; y++) {
+								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].int[y].if + ".png\"></td></tr>";
+								s += "<tr><td>"+jdoc.boards[n].int[y].name+"</td></tr></table>";
+						}
+					}
+					s += "</td><td>";
+					if (jdoc.boards[n].io) {
+						for (y = 0; jdoc.boards[n].io[y]; y++) {
+							if (jdoc.boards[n].io[y].grp != 0) {
+								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
+								s += "<tr><td>"+jdoc.boards[n].io[y].name;
+								
+								q = get_if_index(jdoc.boards[n].if, jdoc.boards[n].io[y].if);
+								if (q >= 0 && jdoc.boards[n].if[q].pins) {
+									z = 0; while (jdoc.boards[n].if[q].pins[z])
+										s += "<span class=\"meas\" id=\"rep."+jdoc.boards[n].serial+"."+jdoc.boards[n].io[y].name+"."+jdoc.boards[n].if[q].pins[z++] + "\"></span>";
+								}
+								s += "</td></tr></table>";
+							}
+						}
+					}
+					
+					s += "</td></tr></table>";
+					s += "</td></tr>";
+				}
+				s += "</table>";
+				document.getElementById("boards").innerHTML = s;
+			}  
+
+			if (jdoc.schema == "org.linaro.lmp.report") {
+			
+				n = 0;
+				while (jdoc.report[n].name) {
+					if (document.getElementById("rep."+jdoc.serial+"."+jdoc.report[n].name)) {
+						if (jdoc.report[n].val) {
+							s = "<table><tr><td style=\"meas\">" + jdoc.report[n].name + "</td><td style=\"meas\">" + jdoc.report[n].val;
+							s += jdoc.report[n].unit + "</td></tr></table>";
+							document.getElementById("rep."+jdoc.serial+"."+jdoc.report[n].name).innerHTML = s;
+						}
+					}
+					n++;
+				}
 			}
 		}
-
-		socket_lm.onclose = function(){
-			document.getElementById("wslm_statustd").style.backgroundColor = "#ff4040";
-			document.getElementById("wslm_status").textContent = " websocket connection CLOSED ";
+		socket_di.onclose = function(){
+			connection = 0;
+			grayOut(true,{'zindex':'499'});
+			setTimeout("conn_retry();", 1000);
 		}
 	} catch(exception) {
 		alert('<p>Error' + exception);  
 	}
-
-	var canvas = document.createElement('canvas');
-	canvas.height = 300;
-	canvas.width = 480;
-	ctx = canvas.getContext("2d");
-
-	document.getElementById('wslm_drawing').appendChild(canvas);
-
-	canvas.addEventListener('mousemove', ev_mousemove, false);
-	canvas.addEventListener('mousedown', ev_mousedown, false);
-	canvas.addEventListener('mouseup', ev_mouseup, false);
-
-	offsetX = offsetY = 0;
-	element = canvas;
-      if (element.offsetParent) {
-        do {
-          offsetX += element.offsetLeft;
-          offsetY += element.offsetTop;
-        } while ((element = element.offsetParent));
-      }
- 
-function update_color() {
-	color = document.getElementById("color").value;
 }
 
-function ev_mousedown (ev) {
-	down = 1;
-}
+/*
+ * This section around grayOut came from here:
+ * http://www.codingforums.com/archive/index.php/t-151720.html
+ * Assumed public domain
+ */
 
-function ev_mouseup(ev) {
-	down = 0;
-	no_last = 1;
-}
+function grayOut(vis, options) {
+	var options = options || {};
+	var zindex = options.zindex || 50;
+	var opacity = options.opacity || 70;
+	var opaque = (opacity / 100);
+	var bgcolor = options.bgcolor || '#000000';
+	var dark = document.getElementById('darkenScreenObject');
 
-function ev_mousemove (ev) {
-	var x, y;
-
-	if (ev.offsetX) {
-		x = ev.offsetX;
-		y = ev.offsetY;
+	if (!dark) {
+		var tbody = document.getElementsByTagName("body")[0];
+		var tnode = document.createElement('div');
+		tnode.style.position = 'absolute';
+		tnode.style.top = '0px';
+		tnode.style.left = '0px';
+		tnode.style.overflow = 'hidden';
+		tnode.style.display ='none';
+		tnode.id = 'darkenScreenObject';
+		tbody.appendChild(tnode);
+		dark = document.getElementById('darkenScreenObject');
+	}
+	if (vis) {
+		dark.style.opacity = opaque;
+		dark.style.MozOpacity = opaque;
+		dark.style.filter ='alpha(opacity='+opacity+')';
+		dark.style.zIndex = zindex;
+		dark.style.backgroundColor = bgcolor;
+		dark.style.width = gsize(1);
+		dark.style.height = gsize(0);
+		dark.style.display ='block';
+		addEvent(window, "resize",
+			function() {
+				dark.style.height = gsize(0);
+				dark.style.width = gsize(1);
+			}
+		);
 	} else {
-		x = ev.layerX - offsetX;
-		y = ev.layerY - offsetY;
-
+		dark.style.display = 'none';
+		removeEvent(window, "resize",
+			function() {
+				dark.style.height = gsize(0);
+				dark.style.width = gsize(1);
+			}
+		);
 	}
-
-	if (!down)
-		return;
-	if (no_last) {
-		no_last = 0;
-		last_x = x;
-		last_y = y;
-		return;
-	}
-	socket_lm.send("d " + color + " " + last_x + " " + last_y + " " + x + ' ' + y + ';');
-
-	last_x = x;
-	last_y = y;
 }
 
+function gsize(ptype)
+{
+	var h = document.compatMode == 'CSS1Compat' &&
+		!window.opera ?
+			document.documentElement.clientHeight :
+						document.body.clientHeight;
+	var w = document.compatMode == 'CSS1Compat' &&
+		!window.opera ? 
+			document.documentElement.clientWidth :
+						document.body.clientWidth;
+	if (document.body && 
+		    (document.body.scrollWidth || document.body.scrollHeight)) {
+		var pageWidth = (w > (t = document.body.scrollWidth)) ?
+					("" + w + "px") : ("" + (t) + "px");
+		var pageHeight = (h > (t = document.body.scrollHeight)) ?
+					("" + h + "px") : ("" + (t) + "px");
+	} else if (document.body.offsetWidth) {
+		var pageWidth = (w > (t = document.body.offsetWidth)) ?
+					("" + w + "px") : ("" + (t) + "px");
+		var pageHeight =(h > (t = document.body.offsetHeight)) ?
+					("" + h + "px") : ("" + (t) + "px");
+	} else {
+		var pageWidth = '100%';
+		var pageHeight = '100%';
+	}
+	return (ptype == 1) ? pageWidth : pageHeight;
+}
+
+function addEvent( obj, type, fn ) {
+	if ( obj.attachEvent ) {
+		obj['e' + type + fn] = fn;
+		obj[type+fn] = function() { obj['e' + type+fn]( window.event );}
+		obj.attachEvent('on' + type, obj[type + fn]);
+	} else
+		obj.addEventListener(type, fn, false);
+}
+
+function removeEvent( obj, type, fn ) {
+	if ( obj.detachEvent ) {
+		obj.detachEvent('on' + type, obj[type + fn]);
+		obj[type + fn] = null;
+	} else
+		obj.removeEventListener(type, fn, false);
+}
+
+/*
+ * end of grayOut related stuff
+ */
 
 </script>
 

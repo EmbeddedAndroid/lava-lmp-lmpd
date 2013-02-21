@@ -20,16 +20,22 @@
 
 #include <libwebsockets.h>
 
+#include <termios.h>
+#include <linux/serial.h>
+
 #define LOCAL_RESOURCE_PATH "/usr/share/lmpd"
 
 static int max_poll_elements;
 static struct pollfd *pollfds;
-static int *fd_lookup;
+static int *fd_to_pollfd_index;
 static int count_pollfds;
-static char force_exit = 0;
 static char *fd_to_type;
 
+static char force_exit = 0;
 #define MAX_LMP 128
+#define MAX_JSON 16384
+
+static int issue;
 
 enum lmpd_socket_types {
 	LST_UNKNOWN,
@@ -40,20 +46,37 @@ enum lmpd_socket_types {
 enum lmpd_protocols {
 	/* always first */
 	PROTOCOL_HTTP = 0,
+	PROTOCOL_LMPD,
+};
 
-	/* always last */
-	DEMO_PROTOCOL_COUNT
+enum decode_hdr {
+	WAIT_FOR_SOH,
+	INSIDE_HDR,
+	INSIDE_PAYLOAD,
 };
 
 struct lmp {
 	char dev_path[64];
 	char tree_path[128];
 	char serial[64];
+	char json_lmp[MAX_JSON];
+
+	char fifo[MAX_JSON];
+	int head;
+	int tail;
+
+	int eot;
+	unsigned int seen_sot:1;
+
+	enum decode_hdr hdr_state;
 	int fd;
 };
 
 static struct lmp lmp[MAX_LMP];
 static int nlmp;
+
+static char json_fifo[65536];
+static int json_fifo_head;
 
 struct serveable {
 	const char *urlpath;
@@ -63,6 +86,14 @@ struct serveable {
 static const struct serveable whitelist[] = {
 	{ "/favicon.ico", "image/x-icon" },
 	{ "/lmp-logo.png", "image/png" },
+	{ "/HDMI.png", "image/png" },
+	{ "/USB-A.png", "image/png" },
+	{ "/USB-minib.png", "image/png" },
+	{ "/SD.png", "image/png" },
+	{ "/uSD.png", "image/png" },
+	{ "/undefined.png", "image/png" },
+	{ "/jack4.png", "image/png" },
+	{ "/bus8.png", "image/png" },
 
 	/* last one is the default served if no match */
 	{ "/index.html", "text/html" },
@@ -90,6 +121,27 @@ static int lmp_find_by_devpath(const char *devpath)
 	return -1;
 }
 
+static int lmp_find_by_fd(int fd1)
+{
+	int n;
+
+	for (n = 0; n < nlmp; n++)
+		if (lmp[n].fd == fd1)
+			return n;
+
+	return -1;
+}
+
+static int lmpd_sort_compare(const void *a, const void *b)
+{
+	return strcmp(((struct lmp *)a)->serial, ((struct lmp *)b)->serial);
+}
+
+static void lmpd_sort(void)
+{
+	qsort(lmp, nlmp, sizeof lmp[0], lmpd_sort_compare);
+}
+
 /* this protocol server (always the first one) just knows how to do HTTP */
 
 static int callback_http(struct libwebsocket_context *context,
@@ -98,12 +150,11 @@ static int callback_http(struct libwebsocket_context *context,
 							   void *in, size_t len)
 {
 	char buf[256];
-	int n;
-	unsigned char *p;
-	static unsigned char buffer[8192];
-	struct stat stat_buf;
-	struct per_session_data__http *pss =
-				(struct per_session_data__http *)user;
+	int n = 0;
+	static unsigned char buffer[MAX_JSON + 10];
+	unsigned char *p = buffer;
+//	struct per_session_data__http *pss =
+//				(struct per_session_data__http *)user;
 	int m;
 	int fd = (int)(long)in;
 
@@ -112,49 +163,47 @@ static int callback_http(struct libwebsocket_context *context,
 
 		/* check for the "send a big file by hand" example case */
 
-		if (!strcmp((const char *)in, "/leaf.jpg")) {
-
-			/* well, let's demonstrate how to send the hard way */
+		if (!strcmp((const char *)in, "/json")) {
 
 			p = buffer;
-
-			pss->fd = open(LOCAL_RESOURCE_PATH"/leaf.jpg", O_RDONLY);
-			if (pss->fd < 0)
-				return -1;
-
-			fstat(pss->fd, &stat_buf);
-
-			/*
-			 * we will send a big jpeg file, but it could be
-			 * anything.  Set the Content-Type: appropriately
-			 * so the browser knows what to do with it.
-			 */
-
 			p += sprintf((char *)p,
 				"HTTP/1.0 200 OK\x0d\x0a"
 				"Server: libwebsockets\x0d\x0a"
-				"Content-Type: image-jpeg\x0d\x0a"
-					"Content-Length: %u\x0d\x0a\x0d\x0a",
-					(unsigned int)stat_buf.st_size);
-
-			/*
-			 * send the http headers...
-			 * this won't block since it's the first payload sent
-			 * on the connection since it was established
-			 */
-
+				"Content-Type: application-json\x0d\x0a"
+					"\x0d\x0a");
 			n = libwebsocket_write(wsi, buffer,
-				   p - buffer, LWS_WRITE_HTTP);
-
-			if (n < 0) {
-				close(pss->fd);
+					p - buffer,
+					LWS_WRITE_HTTP);
+			if (n < 0)
 				return -1;
+
+			strcpy((char *)buffer, "{\"schema\":\"org.linaro.lmp.boardlist\",\"boards\":[");
+			m = libwebsocket_write(wsi,
+					buffer, strlen((char *)buffer),
+					LWS_WRITE_HTTP);
+			if (m < 0)
+				return -1;
+
+			for (n = 0; n < nlmp; n++) {
+				p = buffer;
+				strcpy((char *)p, lmp[n].json_lmp);
+				p += strlen(lmp[n].json_lmp);
+				if (n != nlmp - 1)
+					*p++ = ',';
+				m = libwebsocket_write(wsi,
+						buffer, p - buffer,
+						LWS_WRITE_HTTP);
+				if (m < 0)
+					return -1;
 			}
-			/*
-			 * book us a LWS_CALLBACK_HTTP_WRITEABLE callback
-			 */
-			libwebsocket_callback_on_writable(context, wsi);
-			break;
+
+			strcpy((char *)buffer, "]}");
+			m = libwebsocket_write(wsi,
+					buffer, strlen((char *)buffer),
+					LWS_WRITE_HTTP);
+
+
+			return -1;
 		}
 
 		/* if not, send a file the easy way */
@@ -180,34 +229,7 @@ static int callback_http(struct libwebsocket_context *context,
 		return -1;
 
 	case LWS_CALLBACK_HTTP_WRITEABLE:
-		/*
-		 * we can send more of whatever it is we were sending
-		 */
-
-		do {
-			n = read(pss->fd, buffer, sizeof buffer);
-			/* problem reading, close conn */
-			if (n < 0)
-				goto bail;
-			/* sent it all, close conn */
-			if (n == 0)
-				goto bail;
-			/*
-			 * because it's HTTP and not websocket, don't need to
-			 * take care about pre and postamble
-			 */
-			n = libwebsocket_write(wsi, buffer, n, LWS_WRITE_HTTP);
-			if (n < 0)
-				/* write failed, close conn */
-				goto bail;
-
-		} while (!lws_send_pipe_choked(wsi));
-		libwebsocket_callback_on_writable(context, wsi);
 		break;
-
-bail:
-		close(pss->fd);
-		return -1;
 
 	case LWS_CALLBACK_ADD_POLL_FD:
 
@@ -216,33 +238,186 @@ bail:
 			return 1;
 		}
 
-		fd_lookup[fd] = count_pollfds;
+		fd_to_pollfd_index[fd] = count_pollfds;
 		pollfds[count_pollfds].fd = fd;
 		pollfds[count_pollfds].events = (int)(long)len;
 		pollfds[count_pollfds++].revents = 0;
 		break;
 
 	case LWS_CALLBACK_DEL_POLL_FD:
-		if (!--count_pollfds)
+		m = fd_to_pollfd_index[fd];
+		if (m < 0)
 			break;
-		m = fd_lookup[fd];
+		if (pollfds[m].fd != fd) {
+			lwsl_err("fd mismatch in delete");
+			break;
+		}
+		count_pollfds--;
+		fd_to_pollfd_index[fd] = -1;
 		fd_to_type[fd] = LST_UNKNOWN;
+		if (m == count_pollfds)
+			break;
 		/* have the last guy take up the vacant slot */
 		pollfds[m] = pollfds[count_pollfds];
-		fd_lookup[pollfds[count_pollfds].fd] = m;
+		fd_to_pollfd_index[pollfds[m].fd] = m;
 		break;
 
 	case LWS_CALLBACK_SET_MODE_POLL_FD:
-		pollfds[fd_lookup[fd]].events |= (int)(long)len;
+		pollfds[fd_to_pollfd_index[fd]].events |= (int)(long)len;
 		break;
 
 	case LWS_CALLBACK_CLEAR_MODE_POLL_FD:
-		pollfds[fd_lookup[fd]].events &= ~(int)(long)len;
+		pollfds[fd_to_pollfd_index[fd]].events &= ~(int)(long)len;
 		break;
 
 	default:
 		break;
 	}
+
+	return 0;
+}
+
+struct per_session_data__lmpd {
+	int m;
+	int sent_lmp_json;
+	int json_fifo_tail;
+
+	int last_issue;
+};
+
+static int callback_lmpd(struct libwebsocket_context *context,
+		struct libwebsocket *wsi,
+		enum libwebsocket_callback_reasons reason, void *user,
+							   void *in, size_t len)
+{
+	unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + MAX_JSON +
+						  LWS_SEND_BUFFER_POST_PADDING];
+	struct per_session_data__lmpd *pss =
+				(struct per_session_data__lmpd *)user;
+	int n;
+	int m;
+	unsigned char *p = &buf[LWS_SEND_BUFFER_PRE_PADDING];
+
+	switch (reason) {
+
+	case LWS_CALLBACK_ESTABLISHED:
+		pss->m = 0;
+		lwsl_notice("established\n");
+		libwebsocket_callback_on_writable(context, wsi);
+		break;
+
+	case LWS_CALLBACK_CLOSED:
+		lwsl_notice("closed\n");
+		break;
+
+	case LWS_CALLBACK_RECEIVE:
+		break;
+
+	case LWS_CALLBACK_SERVER_WRITEABLE:
+
+		if (issue != pss->last_issue) {
+			pss->last_issue = issue;
+			pss->sent_lmp_json = 0;
+		}
+
+		/* issue stashed lmp json if we didn't do it already */
+
+		if (pss->sent_lmp_json < MAX_LMP) {
+			if (!pss->sent_lmp_json)
+				m = LWS_WRITE_TEXT;
+			else
+				m = LWS_WRITE_CONTINUATION;
+			if (!pss->sent_lmp_json)
+				p += sprintf((char *)p, "{\"schema\":\"org.linaro.lmp.boardlist\",\"boards\":[");
+			if (nlmp) {
+				while (pss->sent_lmp_json < nlmp && lmp[pss->sent_lmp_json].json_lmp[0] == '\0')
+					pss->sent_lmp_json++;
+				if (pss->sent_lmp_json < nlmp) {
+					strcpy((char *)p, lmp[pss->sent_lmp_json].json_lmp);
+					p += strlen((char *)lmp[pss->sent_lmp_json].json_lmp);
+				}
+				if (pss->sent_lmp_json >= nlmp - 1) {
+					p += sprintf((char *)p, "    ]}");
+					pss->sent_lmp_json = MAX_LMP;
+				} else {
+					*p++ = ',';
+					m |= LWS_WRITE_NO_FIN;
+				}
+			} else {
+				p += sprintf((char *)p, "]}");
+				pss->sent_lmp_json = MAX_LMP;
+			}
+
+			n = libwebsocket_write(wsi,
+					&buf[LWS_SEND_BUFFER_PRE_PADDING],
+					p - &buf[LWS_SEND_BUFFER_PRE_PADDING],
+					m);
+			if (!n)
+				pss->sent_lmp_json++;
+			libwebsocket_callback_on_writable(context, wsi);
+			break;
+		}
+
+		if (pss->json_fifo_tail == json_fifo_head)
+			break;
+
+		/* something to send */
+
+		m = 0;
+		while (pss->json_fifo_tail != json_fifo_head &&
+				json_fifo[pss->json_fifo_tail] != '\x04' &&
+				m < MAX_JSON) {
+			*p++ = json_fifo[pss->json_fifo_tail++];
+			if (pss->json_fifo_tail == sizeof(json_fifo))
+				pss->json_fifo_tail = 0;
+			m++;
+		}
+		if (json_fifo[pss->json_fifo_tail] == '\x04') {
+			pss->json_fifo_tail++;
+			if (pss->json_fifo_tail == sizeof(json_fifo))
+				pss->json_fifo_tail = 0;
+		}
+
+		n = libwebsocket_write(wsi, &buf[LWS_SEND_BUFFER_PRE_PADDING],
+				m, LWS_WRITE_TEXT);
+		if (n) {
+			lwsl_err("failed to send ws data %d\n");
+			return -1;
+		}
+		break;
+
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static struct libwebsocket_protocols protocols[] = {
+	/* first protocol must always be HTTP handler */
+	{
+		"http-only",		/* name */
+		callback_http,		/* callback */
+		sizeof (struct per_session_data__http),	/* per_session_data */
+		0,			/* max frame size / rx buffer */
+	}, {
+		"wsprotocol.org.linaro.lmpd",
+		callback_lmpd,
+		sizeof (struct per_session_data__lmpd),
+		4096,
+	},
+	{ NULL, NULL, 0, 0 }
+};
+
+static int
+lmpd_cmd(struct lmp *plmp, const char *cmd)
+{
+	int n;
+
+	n = write(plmp->fd, cmd, strlen(cmd));
+	lwsl_notice("lmpd_cmd: %c %d\n", cmd[0], n);
+	if (n < 0)
+		return n;
 
 	return 0;
 }
@@ -255,6 +430,7 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 	int relevant = 0;
 	char *devname, *act, *serial, *devpath;
 	int i;
+	struct termios tty;
 
 	len = recv(pfd->fd, buf, sizeof(buf), MSG_DONTWAIT);
 	if (len <= 0) {
@@ -295,13 +471,17 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 
 	i = lmp_find_by_devpath(devpath);
 	if (relevant == 5 && (!strcmp(act, "add") || !strcmp(act, "change"))) {
-		if (i >= 0)
+		if (i >= 0) {
+			lwsl_notice("Found %s\n", devpath);
 			return 0;
+		}
 		/* create the struct lmp */
 		if (nlmp == sizeof(lmp) / sizeof(lmp[0])) {
 			lwsl_err("Too many lmp\n");
 			return 0;
 		}
+
+		memset(&lmp[nlmp], 0, sizeof lmp[nlmp]);
 		strncpy(lmp[nlmp].tree_path, devpath,
 					 sizeof lmp[nlmp].tree_path);
 		lmp[nlmp].tree_path[sizeof(lmp[nlmp].tree_path) - 1] = '\0';
@@ -316,42 +496,73 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 			lwsl_err("Unable to open %s\n", devname);
 			return 0;
 		}
+
+		/* enforce suitable tty state */
+
+		memset (&tty, 0, sizeof tty);
+		if (tcgetattr (lmp[nlmp].fd, &tty)) {
+			lwsl_err("tcgetattr failed on %s\n", devname);
+			close(lmp[nlmp].fd);
+			return 0;
+		}
+
+		tty.c_lflag &= ~(ISIG | ICANON | IEXTEN | ECHO | XCASE |
+				ECHOE | ECHOK | ECHONL | ECHOCTL | ECHOKE);
+		tty.c_iflag &= ~(INLCR | IGNBRK | IGNPAR | IGNCR | ICRNL |
+				   IMAXBEL | IXON | IXOFF | IXANY | IUCLC);
+		tty.c_oflag &= ~(ONLCR | OPOST | OLCUC | OCRNL | ONLRET);
+		tty.c_cc[VMIN]  = 1;
+		tty.c_cc[VTIME] = 0;
+		tty.c_cc[VEOF] = 1;
+		tty.c_cflag &=  ~(CBAUD | CSIZE | CSTOPB | PARENB | CRTSCTS);
+		tty.c_cflag |= (8 | CREAD | 0 | 0 | 1 | CLOCAL);
+
+		cfsetispeed(&tty, B115200);
+		cfsetospeed(&tty, B115200);
+		tcsetattr(lmp[nlmp].fd, TCSANOW, &tty);
+
 		/* add us to the poll array */
 		fd_to_type[lmp[nlmp].fd] = LST_TTYACM;
 		callback_http(NULL, NULL, LWS_CALLBACK_ADD_POLL_FD,
 				      NULL, (void *)(long)lmp[nlmp].fd, POLLIN);
+		lwsl_notice("Added %s fd %d serial %s\n",
+					devname, lmp[nlmp].fd, serial);
+
 		/* make it official */
-		nlmp++;
-		lwsl_notice("Added %s serial %s\n", devname, serial);
+		lmpd_cmd(&lmp[nlmp++], "j");
+
+		lmpd_sort();
+
+		/* inform when we got the json back */
+		return 0;
 	}
 	if (relevant == 4 && !strcmp(act, "remove")) {
 		if (i < 0)
 			return 0;
-		lwsl_notice("Removed %s serial %s\n",
-				lmp[i].dev_path, lmp[i].serial);
-		fd_to_type[lmp[nlmp].fd] = LST_TTYACM;
+		lwsl_notice("Removed #%d %s serial %s, closing fd %d\n",
+			i, lmp[i].dev_path, lmp[i].serial, lmp[i].fd);
+		fd_to_type[lmp[i].fd] = LST_UNKNOWN;
 		callback_http(NULL, NULL, LWS_CALLBACK_DEL_POLL_FD,
-			      NULL, (void *)(long)lmp[nlmp].fd, 0);
-
+			      NULL, (void *)(long)lmp[i].fd, 0);
+		lwsl_err("closing fd %d\n", lmp[i].fd);
 		close(lmp[i].fd);
 		if (nlmp > 1)
 			lmp[i] = lmp[nlmp - 1];
 		nlmp--;
+		lmpd_sort();
+		goto inform;
 	}
 
 	return 0;
+
+inform:
+	/* inform clients something happened */
+	issue++;
+	libwebsocket_callback_on_writable_all_protocol(
+						&protocols[PROTOCOL_LMPD]);
+
+	return 0;
 }
-
-static struct libwebsocket_protocols protocols[] = {
-	/* first protocol must always be HTTP handler */
-
-	{
-		"http-only",		/* name */
-		callback_http,		/* callback */
-		sizeof (struct per_session_data__http),	/* per_session_data */
-		0,			/* max frame size / rx buffer */
-	},
-};
 
 void sighandler(int sig)
 {
@@ -362,17 +573,19 @@ void sighandler(int sig)
 int main(void)
 {
 	struct sockaddr_nl nls;
-	char buf[256];
-	int n, m;
+	char buf[MAX_JSON];
+	int n, m, i, j, k;
 	int fd;
 	DIR *dir;
 	struct dirent *dirent;
 	const char *coldplug_dir = "/sys/class/tty/";
 	int debug_level = 7;
-	struct libwebsocket_context *context;
+	struct libwebsocket_context *context = NULL;
 	struct lws_context_creation_info info;
 	int use_ssl = 0;
 	int opts = 0;
+	struct lmp *plmp;
+	char c;
 
 	memset(&info, 0, sizeof info);
 	info.port = 7681;
@@ -387,9 +600,9 @@ int main(void)
 
 	max_poll_elements = getdtablesize();
 	pollfds = malloc(max_poll_elements * sizeof (struct pollfd));
-	fd_lookup = malloc(max_poll_elements * sizeof (int));
+	fd_to_pollfd_index = malloc(max_poll_elements * sizeof (int));
 	fd_to_type = malloc(max_poll_elements * sizeof (char));
-	if (pollfds == NULL || fd_lookup == NULL || fd_to_type == NULL) {
+	if (pollfds == NULL || fd_to_pollfd_index == NULL || fd_to_type == NULL) {
 		lwsl_err("Out of memory pollfds=%d\n", max_poll_elements);
 		return -1;
 	}
@@ -479,12 +692,18 @@ post_coldplug:
 	 */
 	m = 0;
 	while (m >= 0 && !force_exit) {
+
 		m = poll(pollfds, count_pollfds, 50);
-		if (m <= 0)
+		if (m < 0)
 			continue;
+		if (m == 0) {
+			libwebsocket_service_fd(context, NULL);
+			continue;
+		}
 		for (n = 0; n < count_pollfds; n++) {
 			if (!pollfds[n].revents)
 				continue;
+
 			switch (fd_to_type[pollfds[n].fd]) {
 			case LST_NETLINK:
 				if (!(pollfds[n].revents & POLLIN))
@@ -494,6 +713,102 @@ post_coldplug:
 					goto done;
 				break;
 			case LST_TTYACM:
+				k = lmp_find_by_fd(pollfds[n].fd);
+				if (k < 0) {
+					lwsl_err("lost fd %d\n", pollfds[n].fd);
+					break;
+				}
+				plmp = &lmp[k];
+				i = read(pollfds[n].fd, buf, sizeof buf);
+				if (i <= 0) {
+					lwsl_err("read failed %d\n", i);
+					fd_to_type[pollfds[n].fd] = LST_UNKNOWN;
+					callback_http(NULL, NULL,
+						LWS_CALLBACK_DEL_POLL_FD, NULL,
+						(void *)(long)pollfds[n].fd, 0);
+					/* inform clients something happened */
+					libwebsocket_callback_on_writable_all_protocol(
+						     &protocols[PROTOCOL_LMPD]);
+					n = count_pollfds;
+					break;
+				}
+				buf[i] = '\0';
+//				puts(buf);
+
+				/*
+				 * When we first connect to it, it might be in
+				 * the middle of spamming things.  Drain the
+				 * incoming data until first SOT
+				 */
+
+				j = 0;
+				while (!plmp->seen_sot && j < i) {
+					if (buf[j] == '\x02') {
+						plmp->seen_sot = 1;
+						break;
+					}
+					j++;
+				}
+
+				/*
+				 * dump what we have into per-lmp fifo,
+				 * keeping count of any EOTs seen
+				 */
+
+				for (; j < i; j++) {
+					plmp->fifo[plmp->head++] = buf[j];
+					if (plmp->head == sizeof(plmp->fifo))
+						plmp->head = 0;
+					if (buf[j] == '\x04')
+						plmp->eot++;
+				}
+
+				if (!plmp->eot)
+					break;
+
+				/* spill completed jsons into common fifo */
+
+				j = 0;
+				while (plmp->eot) {
+					c = plmp->fifo[plmp->tail];
+					if (c == '\x02') {
+						j = 0;
+						plmp->tail++;
+					} else {
+						buf[j++] = plmp->fifo[plmp->tail];
+						json_fifo[json_fifo_head++] =
+						       plmp->fifo[plmp->tail++];
+					}
+					if (plmp->tail == sizeof(plmp->fifo))
+						plmp->tail = 0;
+					if (json_fifo_head == sizeof(json_fifo))
+						json_fifo_head = 0;
+					/* was it an EOT we just copied in? */
+					if (c == '\x04') {
+						plmp->eot--;
+						/*
+						 * in the local buf,
+						 * replace EOT with '\0'
+						 */
+						buf[j - 1] = '\0';
+						/*
+						 * take a copy of the board
+						 * definition when we see that
+						 * fly by (without EOT)
+						 */
+						if (strstr(buf, "org.linaro.lmp.board") != NULL) {
+							if (plmp->json_lmp[0] == '\0')
+								/* force all connections to reissue board list */
+								issue++;
+							puts(buf);
+							memcpy(plmp->json_lmp, buf, j);
+						}
+					}
+				}
+
+				/* inform clients something happened */
+				libwebsocket_callback_on_writable_all_protocol(
+						     &protocols[PROTOCOL_LMPD]);
 				break;
 			default:
 				/*
@@ -511,9 +826,24 @@ post_coldplug:
 	}
 done:
 
+	for (n = 0; n < count_pollfds; n++) {
+
+		switch (fd_to_type[pollfds[n].fd]) {
+		case LST_NETLINK:
+			close(pollfds[n].fd);
+			close(pollfds[n].fd);
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (context)
+		libwebsocket_context_destroy(context);
+
 	free(fd_to_type);
 	free(pollfds);
-	free(fd_lookup);
+	free(fd_to_pollfd_index);
 
 	return 1;
 }
