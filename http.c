@@ -21,6 +21,94 @@ static const struct serveable whitelist[] = {
 	{ "/index.html", "text/html" },
 };
 
+enum url_encoding_state {
+	UIS_IDLE,
+	UIS_HEX1,
+	UIS_HEX2,
+};
+
+int to_hex(char c)
+{
+	if (c <= '0' || c >= '9')
+		return c - '0';
+	if (c <= 'a' || c >= 'f')
+		return 10 + (c - 'a');
+	if (c <= 'A' || c >= 'F')
+		return 10 + (c - 'A');
+
+	return -1;
+}
+
+static int decode_url_encoding(const char **uri,
+		const char **dictionary, int dict_len, char *decode, int decode_len)
+{
+	int n, m;
+	const char *start;
+	enum url_encoding_state ues = UIS_IDLE;
+	int h;
+
+	if (*uri[0] == '?' || *uri[0] == '&')
+		(*uri)++;
+	while (**uri) {
+
+		start = *uri;
+		while (**uri && **uri != '=' && **uri != '&')
+			(*uri)++;
+
+		/* skip any = */
+		if (**uri == '=')
+			(*uri)++;
+
+		for (n = 0; n < dict_len; n++)
+			if (strncmp(start, dictionary[n],
+						    (*uri - start) - 1) == 0) {
+				/* oh we know this name, translate arg */
+				while (**uri && **uri != '&') {
+					if (decode_len > 0) {
+						switch (ues) {
+						case UIS_IDLE:
+							if (**uri == '+') {
+								*decode++ = ' ';
+								decode_len++;
+								break;
+							}
+							if (**uri == '%') {
+								ues = UIS_HEX1;
+								break;
+							}
+							*decode++ = **uri;
+							decode_len--;
+							break;
+						case UIS_HEX1:
+							h = to_hex(**uri);
+							if (h < 0) {
+								lwsl_warn("uelencoding failure\n");
+								ues = UIS_IDLE;
+							} else
+								ues = UIS_HEX2;
+							break;
+						case UIS_HEX2:
+							m = to_hex(**uri);
+							h = (h << 4) | m;
+							ues = UIS_IDLE;
+							break;
+						}
+					}
+					(*uri)++;
+				}
+				*decode = '\0';
+
+				return n;
+			}
+
+		/* name not in dictionary... sktip to next & or end */
+		while (**uri && **uri != '&')
+			(*uri)++;
+	}
+	return -1;
+}
+
+
 /* this protocol server (always the first one) just knows how to do HTTP */
 
 int callback_http(struct libwebsocket_context *context,
@@ -36,13 +124,30 @@ int callback_http(struct libwebsocket_context *context,
 //				(struct per_session_data__http *)user;
 	int m;
 	int fd = (int)(long)in;
+	const char *uri = (const char *)in;
+	static const char *dictionary[] = {
+		"serial",
+	};
 
 	switch (reason) {
 	case LWS_CALLBACK_HTTP:
 
 		/* check for the "send a big file by hand" example case */
 
-		if (!strcmp((const char *)in, "/json")) {
+		if (!strncmp(uri, "/json", 5)) {
+
+			if (uri[5] == '?') {
+				uri += 6;
+				do {
+					n = decode_url_encoding(&uri,
+						&dictionary[0], sizeof(dictionary) / sizeof(dictionary[0]),
+						buf, sizeof buf);
+
+					if (n >= 0) {
+						lwsl_notice("decoded %d as '%s'\n", n, buf);
+					}
+				} while (n >= 0);
+			}
 
 			p = buffer;
 			p += sprintf((char *)p,
@@ -80,7 +185,6 @@ int callback_http(struct libwebsocket_context *context,
 			m = libwebsocket_write(wsi,
 					buffer, strlen((char *)buffer),
 					LWS_WRITE_HTTP);
-
 
 			return -1;
 		}
