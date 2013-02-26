@@ -34,7 +34,7 @@ lmpd_cmd(struct lmp *plmp, const char *cmd)
 	int n;
 
 	n = write(plmp->fd, cmd, strlen(cmd));
-	lwsl_notice("lmpd_cmd: %c %d\n", cmd[0], n);
+	lwsl_notice("lmpd_cmd: %s %d\n", cmd, n);
 	if (n < 0)
 		return n;
 
@@ -148,7 +148,7 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 					devname, lmp[nlmp].fd, serial);
 
 		/* make it official */
-		lmpd_cmd(&lmp[nlmp++], "j");
+		lmpd_cmd(&lmp[nlmp++], "\x02{ \"schema\":\"org.linaro.lmp.info\" }\x04");
 
 		lmpd_sort();
 

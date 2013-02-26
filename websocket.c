@@ -1,5 +1,16 @@
 #include <lmpd.h>
 
+static int lmp_find_by_serial(const char *serial)
+{
+	int n;
+
+	for (n = 0; n < nlmp; n++)
+		if (!strcmp(lmp[n].serial, serial))
+			return n;
+
+	return -1;
+}
+
 int callback_lmpd(struct libwebsocket_context *context,
 		struct libwebsocket *wsi,
 		enum libwebsocket_callback_reasons reason, void *user,
@@ -26,6 +37,7 @@ int callback_lmpd(struct libwebsocket_context *context,
 		break;
 
 	case LWS_CALLBACK_RECEIVE:
+		lwsl_notice("rx %s\n", (char *)in);
 		break;
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
@@ -95,7 +107,7 @@ int callback_lmpd(struct libwebsocket_context *context,
 
 		n = libwebsocket_write(wsi, &buf[LWS_SEND_BUFFER_PRE_PADDING],
 				m, LWS_WRITE_TEXT);
-		if (n) {
+		if (n < 0) {
 			lwsl_err("failed to send ws data %d\n");
 			return -1;
 		}

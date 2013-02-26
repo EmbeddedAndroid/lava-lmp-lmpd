@@ -59,48 +59,51 @@ static int decode_url_encoding(const char **uri,
 		if (**uri == '=')
 			(*uri)++;
 
-		for (n = 0; n < dict_len; n++)
+		for (n = 0; n < dict_len; n++) {
 			if (strncmp(start, dictionary[n],
-						    (*uri - start) - 1) == 0) {
-				/* oh we know this name, translate arg */
-				while (**uri && **uri != '&') {
-					if (decode_len > 0) {
-						switch (ues) {
-						case UIS_IDLE:
-							if (**uri == '+') {
-								*decode++ = ' ';
-								decode_len++;
-								break;
-							}
-							if (**uri == '%') {
-								ues = UIS_HEX1;
-								break;
-							}
-							*decode++ = **uri;
-							decode_len--;
-							break;
-						case UIS_HEX1:
-							h = to_hex(**uri);
-							if (h < 0) {
-								lwsl_warn("uelencoding failure\n");
-								ues = UIS_IDLE;
-							} else
-								ues = UIS_HEX2;
-							break;
-						case UIS_HEX2:
-							m = to_hex(**uri);
-							h = (h << 4) | m;
-							ues = UIS_IDLE;
-							break;
-						}
-					}
+						    (*uri - start) - 1))
+				continue;
+
+			/* oh we know this name, translate arg */
+			while (**uri && **uri != '&') {
+				if (decode_len <= 0) {
 					(*uri)++;
+					continue;
 				}
-				*decode = '\0';
-
-				return n;
+				switch (ues) {
+				case UIS_IDLE:
+					if (**uri == '+') {
+						*decode++ = ' ';
+						decode_len++;
+						break;
+					}
+					if (**uri == '%') {
+						ues = UIS_HEX1;
+						break;
+					}
+					*decode++ = **uri;
+					decode_len--;
+					break;
+				case UIS_HEX1:
+					h = to_hex(**uri);
+					if (h < 0) {
+						lwsl_warn("uelencoding failure\n");
+						ues = UIS_IDLE;
+					} else
+						ues = UIS_HEX2;
+					break;
+				case UIS_HEX2:
+					m = to_hex(**uri);
+					h = (h << 4) | m;
+					ues = UIS_IDLE;
+					break;
+				}
+				(*uri)++;
 			}
+			*decode = '\0';
 
+			return n;
+		}
 		/* name not in dictionary... sktip to next & or end */
 		while (**uri && **uri != '&')
 			(*uri)++;
@@ -140,7 +143,8 @@ int callback_http(struct libwebsocket_context *context,
 				uri += 6;
 				do {
 					n = decode_url_encoding(&uri,
-						&dictionary[0], sizeof(dictionary) / sizeof(dictionary[0]),
+						&dictionary[0],
+						sizeof(dictionary) / sizeof(dictionary[0]),
 						buf, sizeof buf);
 
 					if (n >= 0) {

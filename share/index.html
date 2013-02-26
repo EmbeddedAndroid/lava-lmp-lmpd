@@ -83,7 +83,7 @@ function get_appropriate_ws_url()
 /* lmpd protocol */
 	
 	var socket_di;
-//	var jdoc;
+	var jdoc;
 
 
 function get_if_index(iff, name)
@@ -95,6 +95,11 @@ function get_if_index(iff, name)
 		n++;
 	}
 	return -1;
+}
+
+function send_id(ser)
+{
+	socket_di.send("{\"schema\":\"org.linaro.lmp.base\", \"serial\":\""+ser+"\",\"identify\":true}");
 }
 
 function conn_retry()
@@ -132,7 +137,7 @@ function conn_retry()
 				for (n = 0; jdoc.boards[n]; n++) {
 					s += "<tr><td class=\"content\">";
 					s += "<table width=\"100%\"><tr><td colspan=\"3\" class=\"btitle\"><table width=\"100%\"><tr><td class=\"type\">"
-					s += jdoc.boards[n].type + "</td><td>" + jdoc.boards[n].serial + "</td><td>[id]</td></tr></table>";
+					s += jdoc.boards[n].type + "</td><td>" + jdoc.boards[n].serial + "</td><td><button type=\"button\" onclick='send_id(\"" + jdoc.boards[n].serial + "\")'>id</button></td></tr></table>";
 					s += "</td><tr><td>";
 					if (jdoc.boards[n].io) {
 						for (y = 0; jdoc.boards[n].io[y]; y++) {
@@ -183,7 +188,7 @@ function conn_retry()
 			if (jdoc.schema == "org.linaro.lmp.report") {
 			
 				n = 0;
-				while (jdoc.report[n].name) {
+				while (jdoc.report[n]) {
 					if (document.getElementById("rep."+jdoc.serial+"."+jdoc.report[n].name)) {
 						if (jdoc.report[n].val) {
 							s = "<table><tr><td style=\"meas\">" + jdoc.report[n].name + "</td><td style=\"meas\">" + jdoc.report[n].val;

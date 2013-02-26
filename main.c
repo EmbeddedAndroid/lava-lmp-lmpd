@@ -105,6 +105,8 @@ int main(void)
 	info.uid = -1;
 	info.options = opts;
 
+	fprintf(stderr, "%p\n", info.ssl_cipher_list);
+
 	context = libwebsocket_create_context(&info);
 	if (context == NULL) {
 		lwsl_err("libwebsocket init failed\n");
