@@ -6,12 +6,14 @@
 <style type="text/css">
 	div.title { font-size:18pt; font: Arial; font-weight:normal; text-align:center; color:#000000; }
 	.type { font-size:12pt; font: Arial; font-weight:bold; text-align:center; color:#000000; }
-	.meas { font-size:9pt; font: Arial; font-weight:normal; text-align:center; color:#000000; }
+	.meas { font-size:9pt; font: Arial; font-weight:normal; text-align:center; color:#404040; }
 	.browser { font-size:18pt; font: Arial; font-weight:normal; text-align:center; color:#ffff00; vertical-align:middle; text-align:center; background:#d0b070; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px;}
 	.group2 { width:600px; vertical-align:middle; text-align:center; background:#f0f0e0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
 	.explain { vertical-align:middle; text-align:center; background:#f0f0c0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; color:#404000; }
 	.content { vertical-align:top; text-align:center; background:#fffff0; padding:4px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
-	.btitle { font-size:10pt; font: Arial; font-weight:normal; text-align:center; color:#404040; vertical-align:top; text-align:center; background:#dfeff0; padding:2px; -webkit-border-radius:6px; -moz-border-radius:4px; border-radius:4px; }
+	.btitle { font-size:10pt; font: Arial; font-weight:normal; text-align:center; color:#404040; vertical-align:top; background:#dfefd0; padding:2px; -webkit-border-radius:6px; -moz-border-radius:4px; border-radius:4px; }
+	.conpan { font-size:10pt; font: Arial; font-weight:normal; text-align:center; color:#404040; vertical-align:top; background:#e8f8e0; padding:2px; -webkit-border-radius:6px; -moz-border-radius:4px; border-radius:4px; }
+	.icon { font-size:9pt; font: Arial; font-weight:bold; text-align:center; color:#404040; cellspacing=3; vertical-align:top; background:#f8f8e8; padding:4px; -webkit-border-radius:6px; -moz-border-radius:6px; border-radius:6px; }
 	.canvas { vertical-align:top; text-align:center; background:#efefd0; padding:12px; -webkit-border-radius:10px; -moz-border-radius:10px; border-radius:10px; }
 </style>
 </head>
@@ -97,9 +99,22 @@ function get_if_index(iff, name)
 	return -1;
 }
 
-function send_id(ser)
+function send_id(event, ser)
 {
-	socket_di.send("{\"schema\":\"org.linaro.lmp.base\", \"serial\":\""+ser+"\",\"identify\":true}");
+	socket_di.send("{\"schema\":\"org.linaro.lmp.base\", \"serial\":\""+ser+"\",\"identify\":\"toggle\"}");
+	event.stopPropagation();
+}
+
+function changemode(event, sel, typ, serial, modename)
+{
+	socket_di.send("{\"schema\":\"org.linaro.lmp."+typ+"\", \"serial\":\""+serial+
+		"\",\"modes\":[{\"name\":\"eth\", \"option\":\""+sel.options[sel.selectedIndex].text+
+		"\"}]}");
+		
+	document.getElementById("debug").textContent = "{\"schema\":\"org.linaro.lmp."+typ+"\", \"serial\":\""+serial+
+		"\",\"modes\":[{\"name\":\"eth\", \"option\":\""+sel.options[sel.selectedIndex].text+
+		"\"}]}";
+	event.stopPropagation();
 }
 
 function conn_retry()
@@ -109,7 +124,7 @@ function conn_retry()
 		return;
 
 	try {
-	
+	                               
 		if (typeof MozWebSocket != "undefined") {
 			socket_di = new MozWebSocket(get_appropriate_ws_url(),
 					   "wsprotocol.org.linaro.lmpd");
@@ -133,16 +148,36 @@ function conn_retry()
 				return;
 			}
 			if (jdoc.schema == "org.linaro.lmp.boardlist") {
-				s = "<table>";
+				s = "<table cellspacing=\"10\">";
 				for (n = 0; jdoc.boards[n]; n++) {
-					s += "<tr><td class=\"content\">";
+					if ((n & 1) == 0)
+						s += "<tr>";
+					s += "<td class=\"content\">";
 					s += "<table width=\"100%\"><tr><td colspan=\"3\" class=\"btitle\"><table width=\"100%\"><tr><td class=\"type\">"
-					s += jdoc.boards[n].type + "</td><td>" + jdoc.boards[n].serial + "</td><td><button type=\"button\" onclick='send_id(\"" + jdoc.boards[n].serial + "\")'>id</button></td></tr></table>";
-					s += "</td><tr><td>";
+					s += jdoc.boards[n].type + "</td><td>" + jdoc.boards[n].serial +
+						"</td><td><input type=\"checkbox\" id=\"btnid." + jdoc.boards[n].serial +
+						"\" onclick='send_id(event, \"" + jdoc.boards[n].serial +
+						"\")' checked="+jdoc.boards[n].identify+">id</input></td></tr></table>";
+					
+					if (jdoc.boards[n].modes != null) {
+						s += "</td></tr><tr><td colspan=\"3\" class=\"conpan\"><table width=\"100%\"><tr>";
+						for (y = 0; jdoc.boards[n].modes[y] != null; y++) {
+							if (jdoc.boards[n].modes[y].options != null) {
+								s += "<td>"+jdoc.boards[n].modes[y].name+": <select class=\"meas\" onchange='changemode(event, this, \""+jdoc.boards[n].type+"\", \""+jdoc.boards[n].serial+"\", \""+jdoc.boards[n].modes[y].name+"\");' id=\"sel."+jdoc.boards[n].serial+"."+jdoc.boards[n].modes[y].name+"\">";
+								z = 0; while (jdoc.boards[n].modes[y].options[z] != null) {
+									s += "<option value=\""+jdoc.boards[n].modes[y].options[z].name+"\">"+jdoc.boards[n].modes[y].options[z].name+"</option>";
+									z++;
+								}
+								s += "<\select></td>";
+							}
+						}
+						s += "</tr></table></td></tr>";
+					}
+					s += "<tr><td>";
 					if (jdoc.boards[n].io) {
 						for (y = 0; jdoc.boards[n].io[y]; y++) {
 							if (jdoc.boards[n].io[y].grp == 0) {
-								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
+								s += "<table width=\"100%\" class=\"icon\"><tr><td><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
 								s += "<tr><td>"+jdoc.boards[n].io[y].name;
 								
 								q = get_if_index(jdoc.boards[n].if, jdoc.boards[n].io[y].if);
@@ -157,7 +192,7 @@ function conn_retry()
 					s += "</td><td width=\"90%\">";
 					if (jdoc.boards[n].int) {
 						for (y = 0; jdoc.boards[n].int[y]; y++) {
-								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].int[y].if + ".png\"></td></tr>";
+								s += "<table width=\"100%\" class=\"icon\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].int[y].if + ".png\"></td></tr>";
 								s += "<tr><td>"+jdoc.boards[n].int[y].name+"</td></tr></table>";
 						}
 					}
@@ -165,30 +200,38 @@ function conn_retry()
 					if (jdoc.boards[n].io) {
 						for (y = 0; jdoc.boards[n].io[y]; y++) {
 							if (jdoc.boards[n].io[y].grp != 0) {
-								s += "<table width=\"100%\"><tr><td align=\"center\"><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
+								s += "<table width=\"100%\" class=\"icon\"><tr><td class=\"icon\"><img src=\"/" + jdoc.boards[n].io[y].if + ".png\"></td></tr>";
 								s += "<tr><td>"+jdoc.boards[n].io[y].name;
 								
 								q = get_if_index(jdoc.boards[n].if, jdoc.boards[n].io[y].if);
 								if (q >= 0 && jdoc.boards[n].if[q].pins) {
 									z = 0; while (jdoc.boards[n].if[q].pins[z])
-										s += "<span class=\"meas\" id=\"rep."+jdoc.boards[n].serial+"."+jdoc.boards[n].io[y].name+"."+jdoc.boards[n].if[q].pins[z++] + "\"></span>";
+										s += "<span class=\"meas\" id=\"rep."+jdoc.boards[n].serial+"."+jdoc.boards[n].io[y].name+
+											"."+jdoc.boards[n].if[q].pins[z++] + "\"></span>";
 								}
 								s += "</td></tr></table>";
 							}
 						}
 					}
 					
-					s += "</td></tr></table>";
 					s += "</td></tr>";
+					s += "</table>";
+					s += "</td>";
+					if ((n & 1) == 1)
+						s += "</tr>";
 				}
 				s += "</table>";
 				document.getElementById("boards").innerHTML = s;
 			}  
 
 			if (jdoc.schema == "org.linaro.lmp.report") {
-			
+
+				if (jdoc.identify != null)
+					document.getElementById("btnid."+jdoc.serial).checked = jdoc.identify;
+									
 				n = 0;
 				while (jdoc.report[n]) {
+
 					if (document.getElementById("rep."+jdoc.serial+"."+jdoc.report[n].name)) {
 						if (jdoc.report[n].val) {
 							s = "<table><tr><td style=\"meas\">" + jdoc.report[n].name + "</td><td style=\"meas\">" + jdoc.report[n].val;

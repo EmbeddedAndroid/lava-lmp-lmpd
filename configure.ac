@@ -18,7 +18,7 @@ AC_PROG_MAKE_SET
 AC_CONFIG_MACRO_DIR([m4])
 
 # Checks for header files.
-AC_CHECK_HEADERS([libwebsockets.h fcntl.h netinet/in.h stdlib.h string.h sys/socket.h unistd.h sys/prctl.h])
+AC_CHECK_HEADERS([libwebsockets.h liblejp.h fcntl.h netinet/in.h stdlib.h string.h sys/socket.h unistd.h sys/prctl.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_SIZE_T

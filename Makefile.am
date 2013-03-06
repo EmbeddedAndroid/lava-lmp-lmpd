@@ -1,8 +1,9 @@
 bin_PROGRAMS=lmpd
 lmpd_SOURCES=main.c http.c netlink.c websocket.c
 lmpd_CFLAGS=-fPIC -Wall -Werror -D_FORTIFY_SOURCE=2 -fstack-protector -std=gnu99 -pedantic -DINSTALL_DATADIR=\"${datarootdir}\"
+
 lmpd_LDFLAGS=-fPIC
-lmpd_LDADD=-lwebsockets
+lmpd_LDADD=-lwebsockets -llejp
 
 #
 # cook a random test cert and key
@@ -27,7 +28,9 @@ EXTRA_INSTALL=share/index.html share/favicon.ico \
 	share/uSD.png \
 	share/undefined.png \
 	share/jack4.png \
-	share/bus8.png
+	share/bus8.png \
+	share/RJ45.png \
+	share/SATA.png
 
 install-data-local: lmpd.pem lmpd.key.pem
 	mkdir -p $(DESTDIR)$(datadir)/lmpd

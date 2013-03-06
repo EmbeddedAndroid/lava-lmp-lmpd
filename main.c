@@ -277,11 +277,12 @@ post_coldplug:
 						 * definition when we see that
 						 * fly by (without EOT)
 						 */
+						// puts(buf);
 						if (strstr(buf, "org.linaro.lmp.board") != NULL) {
 							if (plmp->json_lmp[0] == '\0')
 								/* force all connections to reissue board list */
 								issue++;
-							puts(buf);
+							//puts(buf);
 							memcpy(plmp->json_lmp, buf, j);
 						}
 					}

@@ -16,6 +16,8 @@ static const struct serveable whitelist[] = {
 	{ "/undefined.png", "image/png" },
 	{ "/jack4.png", "image/png" },
 	{ "/bus8.png", "image/png" },
+	{ "/RJ45.png", "image/png" },
+	{ "/SATA.png", "image/png" },
 
 	/* last one is the default served if no match */
 	{ "/index.html", "text/html" },

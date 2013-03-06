@@ -19,6 +19,7 @@
 #include <linux/rtnetlink.h>
 
 #include <libwebsockets.h>
+#include <lejp.h>
 
 #include <termios.h>
 #include <linux/serial.h>
