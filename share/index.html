@@ -108,11 +108,11 @@ function send_id(event, ser)
 function changemode(event, sel, typ, serial, modename)
 {
 	socket_di.send("{\"schema\":\"org.linaro.lmp."+typ+"\", \"serial\":\""+serial+
-		"\",\"modes\":[{\"name\":\"eth\", \"option\":\""+sel.options[sel.selectedIndex].text+
+		"\",\"modes\":[{\"name\":\""+modename+"\", \"option\":\""+sel.options[sel.selectedIndex].text+
 		"\"}]}");
 		
 	document.getElementById("debug").textContent = "{\"schema\":\"org.linaro.lmp."+typ+"\", \"serial\":\""+serial+
-		"\",\"modes\":[{\"name\":\"eth\", \"option\":\""+sel.options[sel.selectedIndex].text+
+		"\",\"modes\":[{\"name\":\""+modename+"\", \"option\":\""+sel.options[sel.selectedIndex].text+
 		"\"}]}";
 	event.stopPropagation();
 }
@@ -136,7 +136,7 @@ function conn_retry()
 		socket_di.onopen = function() {
 			grayOut(false);
 			connection = 1;
-		} 
+		}
 
 		socket_di.onmessage = function (msg) {
 			var s;
@@ -237,6 +237,16 @@ function conn_retry()
 							s = "<table><tr><td style=\"meas\">" + jdoc.report[n].name + "</td><td style=\"meas\">" + jdoc.report[n].val;
 							s += jdoc.report[n].unit + "</td></tr></table>";
 							document.getElementById("rep."+jdoc.serial+"."+jdoc.report[n].name).innerHTML = s;
+						}
+					}
+					if (jdoc.report[n].name == "modes") {
+						var k = 0;
+						while (jdoc.report[n].modes[k]) {
+							ctl = "sel."+jdoc.serial+"."+jdoc.report[n].modes[k].name;
+							if (document.getElementById(ctl))
+								if (document.getElementById(ctl).value != jdoc.report[n].modes[k].mode)
+									document.getElementById(ctl).value = jdoc.report[n].modes[k].mode;
+							k++;
 						}
 					}
 					n++;
