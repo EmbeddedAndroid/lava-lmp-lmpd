@@ -74,7 +74,7 @@ int callback_lmpd(struct libwebsocket_context *context,
 
 	case LWS_CALLBACK_RECEIVE:
 		lmp_index = -1;
-		lwsl_err("rx %s\n", (char *)in);
+		lwsl_notice("rx %s\n", (char *)in);
 		lejp_construct(&ctx, json_cb, in, paths, ARRAY_SIZE(paths));
 		n = lejp_parse(&ctx, in, len);
 		if (n < 0) {
