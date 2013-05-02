@@ -47,7 +47,7 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 	char buf[4096];
 	int len;
 	int relevant = 0;
-	char *devname, *act, *serial, *devpath;
+	char *devname = NULL, *act = NULL, *serial = NULL, *devpath;
 	int i;
 	struct termios tty;
 

@@ -26,4 +26,4 @@ echo -n -e "\x02{\"schema\":\"org.linaro.lmp.base\", \"identify\":true}\x04" > /
 echo -n -e "\x02{\"schema\":\"org.linaro.lmp.set-serial\", \"serial\":\"000000000008\"}\x04" > /dev/ttyACM0
 echo -n -e "\x02{\"schema\":\"org.linaro.lmp.eth\", \"modes\":[{\"name\":\"eth\",\"option\":\"passthru\"}]}\x04" > /dev/ttyACM4
 
-
+echo -n -e "\x02{\"schema\":\"org.linaro.lmp.sdmux\",\"modes\":[{\"name\":\"dut\",\"option\":\"uSDB\"},{\"name\":\"host\",\"option\":\"disconnect\"}]}" > /dev/ttyACM0
