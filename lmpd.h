@@ -24,7 +24,7 @@
 #include <termios.h>
 #include <linux/serial.h>
 
-#define LOCAL_RESOURCE_PATH "/usr/share/lmpd"
+#define LOCAL_RESOURCE_PATH INSTALL_DATADIR"/lmpd"
 #define MAX_LMP 128
 #define MAX_JSON 16384
 #define JSON_FIFO_SIZE 65536
