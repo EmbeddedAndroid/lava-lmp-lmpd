@@ -49,7 +49,6 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 	int relevant = 0;
 	char *devname = NULL, *act = NULL, *serial = NULL, *devpath;
 	int i;
-	struct termios tty;
 
 	len = recv(pfd->fd, buf, sizeof(buf), MSG_DONTWAIT);
 	if (len <= 0) {
@@ -118,27 +117,11 @@ lmpd_service_netlink(struct libwebsocket_context *context, struct pollfd *pfd)
 
 		/* enforce suitable tty state */
 
-		memset (&tty, 0, sizeof tty);
-		if (tcgetattr (lmp[nlmp].fd, &tty)) {
+		if (set_tty_for_lmp(lmp[nlmp].fd)) {
 			lwsl_err("tcgetattr failed on %s\n", devname);
 			close(lmp[nlmp].fd);
 			return 0;
 		}
-
-		tty.c_lflag &= ~(ISIG | ICANON | IEXTEN | ECHO | XCASE |
-				ECHOE | ECHOK | ECHONL | ECHOCTL | ECHOKE);
-		tty.c_iflag &= ~(INLCR | IGNBRK | IGNPAR | IGNCR | ICRNL |
-				   IMAXBEL | IXON | IXOFF | IXANY | IUCLC);
-		tty.c_oflag &= ~(ONLCR | OPOST | OLCUC | OCRNL | ONLRET);
-		tty.c_cc[VMIN]  = 1;
-		tty.c_cc[VTIME] = 0;
-		tty.c_cc[VEOF] = 1;
-		tty.c_cflag &=  ~(CBAUD | CSIZE | CSTOPB | PARENB | CRTSCTS);
-		tty.c_cflag |= (8 | CREAD | 0 | 0 | 1 | CLOCAL);
-
-		cfsetispeed(&tty, B115200);
-		cfsetospeed(&tty, B115200);
-		tcsetattr(lmp[nlmp].fd, TCSANOW, &tty);
 
 		/* add us to the poll array */
 		fd_to_type[lmp[nlmp].fd] = LST_TTYACM;

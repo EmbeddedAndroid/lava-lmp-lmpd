@@ -103,3 +103,5 @@ extern int callback_lmpd(struct libwebsocket_context *context,
 		enum libwebsocket_callback_reasons reason, void *user,
 							  void *in, size_t len);
 extern struct libwebsocket_protocols protocols[];
+
+extern int set_tty_for_lmp(int fd);
