@@ -1,9 +1,14 @@
-bin_PROGRAMS=lmpd
+bin_PROGRAMS=lmpd spinor
 lmpd_SOURCES=main.c http.c netlink.c websocket.c liblmp.c
 lmpd_CFLAGS=-fPIC -Wall -Werror -D_FORTIFY_SOURCE=2 -fstack-protector -std=gnu99 -pedantic -DINSTALL_DATADIR=\"${datarootdir}\"
-
 lmpd_LDFLAGS=-fPIC
 lmpd_LDADD=-lwebsockets -llejp
+
+spinor_SOURCES=spi-nor.c
+spinor_CFLAGS=-fPIC -Wall -Werror -D_FORTIFY_SOURCE=2 -fstack-protector -std=gnu99 -pedantic -DINSTALL_DATADIR=\"${datarootdir}\"
+spinor_LDFLAGS=-fPIC
+spinor_LDADD=-llejp
+
 
 #
 # cook a random test cert and key
