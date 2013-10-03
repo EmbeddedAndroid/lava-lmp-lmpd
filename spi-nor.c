@@ -110,10 +110,12 @@ static int budget;
 static unsigned char rdid[256];
 struct cfi *cfi = (struct cfi *)(rdid + 0x10);
 static int fd_file = -1;
-static unsigned long address = 0, length = 0;
-static char no_erase = 0;
-static int allow_send = 0;
-static char failed_cfi = 0;
+static unsigned long address, length;
+static char no_erase;
+static int allow_send;
+static char failed_cfi;
+static char verify;
+static char otp;
 
 struct chips {
 	unsigned int erase_sect;
@@ -155,10 +157,12 @@ static const char *tx_cmd[] = {
 
 enum {
 	LEJPPM_READ = 1,
+	LEJPPM_ERR,
 };
 
 static const char * const paths[] = {
 	"read",
+	"err",
 };
 
 static char nyb;
@@ -240,11 +244,63 @@ void track_time(void)
 	sec = tv.tv_sec;
 }
 
+void hexdump(unsigned long ads, unsigned char *p, int len)
+{
+	char str[48];
+	int n, y = 0, m, c;
+	static const char hex[] = "0123456789ABCDEF";
+
+	str[y++] = '\r';
+	str[y++] = '\n';
+	str[y++] = '\0';
+	fprintf(stderr, "%s", str);
+	y = 0;
+
+	for (n = 0; n < len; n++) {
+		if (!y)
+			y = sprintf(str, "%08lX: ", ads + n);
+
+		str[y++] = hex[(p[n] >> 4) & 0xf];
+		str[y++] = hex[p[n] & 0xf];
+		if ((n & 7) != 7 && n != len - 1) {
+			str[y++] = ' ';
+			continue;
+		}
+
+		m = n;
+		while ((m & 7) != 7) {
+			str[y++] = ' ';
+			str[y++] = ' ';
+			str[y++] = ' ';
+			m++;
+		}
+		str[y++] = ' ';
+		str[y++] = ' ';
+		c = 8;
+		m = n & ~7;
+		if (m + 8 > len)
+			c = len - m;
+		while (c--) {
+			if (p[m] < 32 || p[m] > 126)
+				str[y++] = '.';
+			else
+				str[y++] = p[m];
+			m++;
+		}
+
+		str[y++] = '\r';
+		str[y++] = '\n';
+		str[y++] = '\0';
+		fprintf(stderr, "%s", str);
+		y = 0;
+	}
+}
+
 static char
 parse_callback(struct lejp_ctx *ctx, char reason)
 {
 	int n, m, k = 0;
-	unsigned char buf[128];
+	unsigned char buf[128], vbuf[128];
 	static unsigned char esc;
 
 	if (reason == LEJPCB_COMPLETE) {
@@ -288,7 +344,6 @@ for (n = 0; n < cfi->count_erase_block_regions; n++)
 		return 0;
 	}
 
-
 	if (ctx->path_match != LEJPPM_READ)
 		return 0;
 
@@ -323,13 +378,31 @@ for (n = 0; n < cfi->count_erase_block_regions; n++)
 			}
 		}
 		if (seq == SEQ_WAIT_READ) {
-			m = write(fd_file, buf, k);
-			length -= k;
-			address += k;
-			if (m < 0) {
-				fprintf(stderr,
-					"Failed to write to output file\n");
-				seq = SEQ_FAILED;
+			if (verify) {
+				m = read(fd_file, vbuf, k);
+				if (m < k) {
+					fprintf(stderr, "problem reading file %d\n", m);
+					seq = SEQ_FAILED;
+					break;
+				}
+				if (memcmp(buf, vbuf, k)) {
+					fprintf(stderr, "Verify error... original:");
+					hexdump(address, vbuf, k);
+					fprintf(stderr, "\nread back:");
+					hexdump(address, buf, k);
+					seq = SEQ_FAILED;
+				}
+				length -= k;
+				address += k;
+			} else {
+				m = write(fd_file, buf, k);
+				length -= k;
+				address += k;
+				if (m < 0) {
+					fprintf(stderr,
+					    "Failed to write to output file\n");
+					seq = SEQ_FAILED;
+				}
 			}
 		}
 		track_time();
@@ -378,56 +451,6 @@ static int append_utf8(char *dest, const unsigned char c)
 	return 2;
 }
 
-void hexdump(unsigned char *p, int len)
-{
-	char str[48];
-	int n, y = 0, m, c;
-	static const char hex[] = "0123456789ABCDEF";
-
-	str[y++] = '\r';
-	str[y++] = '\n';
-	str[y++] = '\0';
-	fprintf(stderr, "%s", str);
-	y = 0;
-
-	for (n = 0; n < len; n++) {
-		if (!y)
-			y = sprintf(str, "%04X: ", n);
-
-		str[y++] = hex[(p[n] >> 4) & 0xf];
-		str[y++] = hex[p[n] & 0xf];
-		if ((n & 7) == 7 || n == len - 1) {
-			m = n;
-			while ((m & 7) != 7) {
-				str[y++] = ' ';
-				str[y++] = ' ';
-				str[y++] = ' ';
-				m++;
-			}
-			str[y++] = ' ';
-			str[y++] = ' ';
-			c = 8;
-			m = n & ~7;
-			if (m + 8 > len)
-				c = len - m;
-			while (c--) {
-				if (p[m] < 32 || p[m] > 126)
-					str[y++] = '.';
-				else
-					str[y++] = p[m];
-				m++;
-			}
-
-			str[y++] = '\r';
-			str[y++] = '\n';
-			str[y++] = '\0';
-			fprintf(stderr, "%s", str);
-			y = 0;
-		} else
-			str[y++] = ' ' ;
-	}
-}
-
 int perform(int fd, int _job, unsigned long _address, unsigned long _length)
 {
 	struct pollfd pfd;
@@ -443,16 +466,19 @@ int perform(int fd, int _job, unsigned long _address, unsigned long _length)
 	case SEQ_RDID:
 		goto no_print;
 	case SEQ_READ:
-		fprintf(stderr, "  READING ");
+		if (verify)
+			fprintf(stderr, "  VERIFYING ");
+		else
+			fprintf(stderr, "  READING   ");
 		break;
 	case SEQ_WRITE1:
-		fprintf(stderr, "  WRITING ");
+		fprintf(stderr, "  WRITING   ");
 		break;
 	case SEQ_ERASE1:
-		fprintf(stderr, "  ERASING ");
+		fprintf(stderr, "  ERASING   ");
 		/* correct start and length to be in integer erase blocks */
 		l = _address & (chip.erase_sect - 1);
-		_length += (_address - l);
+		_length += (_address - l) & (chip.erase_sect - 1);
 		l = _length & ~(chip.erase_sect - 1);
 		if (_length & (chip.erase_sect - 1))
 			l += chip.erase_sect;
@@ -724,6 +750,7 @@ static struct option options[] = {
 	{ "no-erase",	no_argument,		NULL, 'n' },
 	{ "debug",	no_argument,		NULL, 'd' },
 	{ "verify",	no_argument,		NULL, 'v' },
+	{ "otp",	no_argument,		NULL, 'o' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -735,12 +762,12 @@ int main(int argc, char *argv[])
 	int _job = SEQ_COMPLETED;
 	unsigned long _address = 0, _length = 0;
 	int verbose = 0;
-	int verify = 0;
+	char filepath[512];
 
 	fprintf(stderr, "LSGPIO LMP SPI NOR Programmer (C)2013 Linaro, Ltd\n");
 
 	while (n >= 0) {
-		n = getopt_long(argc, argv, "hndv", options, NULL);
+		n = getopt_long(argc, argv, "hndvo", options, NULL);
 		if (n < 0)
 			continue;
 		switch (n) {
@@ -752,6 +779,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'v':
 			verify = 1;
+			break;
+		case 'o':
+			otp = 1;
 			break;
 		case 'h':
 usage:
@@ -802,6 +832,8 @@ usage:
 			close(fd);
 			goto usage;
 		}
+		strncpy(filepath, argv[optind], sizeof(filepath));
+		filepath[sizeof(filepath) - 1] = '\0';
 		if (_job == SEQ_READ)
 			fd_file = open(argv[optind], O_WRONLY | O_CREAT, 0660);
 		else
@@ -877,7 +909,13 @@ usage:
 		ret = perform(fd, _job, _address, _length);
 
 	if (_job == SEQ_WRITE1 && verify) {
-
+		close(fd_file);
+		fd_file = open(filepath, O_RDONLY);
+		if (fd_file < 0) {
+			fprintf(stderr, "unable to reopen %s\n", filepath);
+			goto bail;
+		}
+		ret = perform(fd, SEQ_READ, _address, _length);
 	}
 
 bail:
