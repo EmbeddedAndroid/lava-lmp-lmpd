@@ -723,6 +723,7 @@ static struct option options[] = {
 	{ "help",	no_argument,		NULL, 'h' },
 	{ "no-erase",	no_argument,		NULL, 'n' },
 	{ "debug",	no_argument,		NULL, 'd' },
+	{ "verify",	no_argument,		NULL, 'v' },
 	{ NULL, 0, 0, 0 }
 };
 
