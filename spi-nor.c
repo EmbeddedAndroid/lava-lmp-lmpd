@@ -820,16 +820,29 @@ int main(int argc, char *argv[])
 			break;
 		case 'h':
 usage:
-			fprintf(stderr, "Usage: %s <LMP path> ["
-				"erase <start ofs> <len>\n"
-				"write <write file> <start ofs> [<len>]\n"
-				"read <read file> <start ofs> <len>\n"
-				"verify <compare file> <start ofs> <len>\n"
-				"[--verify] [--quad]"
-				"\n"
-				"For offset and length, you can give decimal,\n"
+			fprintf(stderr, "\nUsage: %s <LMP path> [\n"
+				"  erase <start ofs> <len> [--verify]                             Erase region\n"
+				"  write <write file> <start ofs> [<len>] [--verify] [--quad]     Write region\n"
+				"  read <read file> <start ofs> <len>                             Read region to file\n"
+				"  verify <compare file> <start ofs> [<len>]                      Verify region matches file\n"
+				"]\n\n"
+				"For <start ofs> and <len>, you can give decimal,\n"
 				"hex like 0x100, or SI units like 4M/ 4G/ 4K\n"
-				"\n", argv[0]);
+				"\n"
+				"With no command, just probes SPI device and exits\n"
+				"Example:\n"
+				"\n"
+				"$ %s write myfile.bin 16m --verify --quad\n"
+				"LSGPIO LMP SPI NOR Programmer (C)2013 Linaro, Ltd\n"
+				"Spansion 0220, 64MB, write page: 512, Erase: 256K, Ads: 32-bit\n"
+				"  ERASING   Start: +0x1000000 (+16777216), length: 0x40000 (262144)\n"
+				"   [##################################################]  , finished in 0.0s\n"
+				"  WRITING   Start: +0x1000000 (+16777216), length: 0x5fc4 (24516)\n"
+				"   [##################################################]     27KiB/sec, finished in 0.8s\n"
+				"  VERIFYING Start: +0x1000000 (+16777216), length: 0x5fc4 (24516)\n"
+				"   [##################################################]  , finished in 0.2s \n"
+				"$\n"
+				"\n", argv[0], argv[0]);
 			return 1;
 		}
 	}
