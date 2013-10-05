@@ -28,7 +28,9 @@ enum nor_commands {
 	NOR_CMD_RDID	= 0x9f,
 	NOR_CMD_WREN	= 0x06,
 	NOR_CMD_SE	= 0xD8,
+	NOR_CMD_4SE	= 0xDC,
 	NOR_CMD_PP	= 0x02,
+	NOR_CMD_4PP	= 0x12,
 	NOR_CMD_QPP	= 0x32,
 	NOR_CMD_4QPP	= 0x34, /* 32-bit addresses */
 	NOR_CMD_WRR	= 0x01,
@@ -116,6 +118,8 @@ static int allow_send;
 static char failed_cfi;
 static char verify;
 static char otp;
+static char quad;
+static char check_erased;
 
 struct chips {
 	unsigned int erase_sect;
@@ -228,8 +232,8 @@ void track_time(void)
 			fprintf(stderr, " ");
 	fprintf(stderr, "]  ");
 
-	if (elapsed_ms > 500)
-		fprintf(stderr, " %4ldKiB/sec", per_sec / 1000);
+	if (elapsed_ms > 500 && (original_length - length))
+		fprintf(stderr, " %4ldKiB/sec", per_sec / 1024);
 
 	if (s_rem && elapsed_ms > 500)
 		fprintf(stderr, ", rem: %4ds", s_rem);
@@ -379,6 +383,16 @@ for (n = 0; n < cfi->count_erase_block_regions; n++)
 		}
 		if (seq == SEQ_WAIT_READ) {
 			if (verify) {
+				if (check_erased) {
+					for (n = 0; n < k; n++)
+						if (buf[n] != 0xff) {
+							fprintf(stderr, "erase fail at 0x%lX: 0x%x\n", address + n, buf[n]);
+							seq = SEQ_FAILED;
+						}
+					length -= k;
+					address += k;
+					goto done;
+				}
 				m = read(fd_file, vbuf, k);
 				if (m < k) {
 					fprintf(stderr, "problem reading file %d\n", m);
@@ -405,6 +419,7 @@ for (n = 0; n < cfi->count_erase_block_regions; n++)
 				}
 			}
 		}
+done:
 		track_time();
 		break;
 	}
@@ -499,6 +514,7 @@ no_print:
 
 	gettimeofday(&tv, NULL);
 	start_time = ((tv.tv_sec * 1000000) + tv.tv_usec);
+	sec = tv.tv_sec;
 
 	while (1) {
 
@@ -545,6 +561,7 @@ no_print:
 			allow_send = 1;
 			gettimeofday(&tv, NULL);
 			start_time = ((tv.tv_sec * 1000000) + tv.tv_usec);
+			sec = tv.tv_sec;
 			continue;
 		}
 		timeouts = 0;
@@ -636,17 +653,25 @@ no_print:
 		case SEQ_WRITE2:
 			m += append_utf8(&tb[m], NOR_CMD_WREN);
 			tb[m++] = (char)UTF8_VIOL__CS_HILO;
-			if (chip.ads32) {
-				m += append_utf8(&tb[m], NOR_CMD_4QPP);
-				m += append_utf8(&tb[m], address >> 24);
-			} else
-				m += append_utf8(&tb[m], NOR_CMD_QPP);
 
-			//m += append_utf8(&tb[m], NOR_CMD_PP);
+			if (quad) {
+				if (chip.ads32) {
+					m += append_utf8(&tb[m], NOR_CMD_4QPP);
+					m += append_utf8(&tb[m], address >> 24);
+				} else
+					m += append_utf8(&tb[m], NOR_CMD_QPP);
+			} else {
+				if (chip.ads32) {
+					m += append_utf8(&tb[m], NOR_CMD_4PP);
+					m += append_utf8(&tb[m], address >> 24);
+				} else
+					m += append_utf8(&tb[m], NOR_CMD_PP);
+			}
 			m += append_utf8(&tb[m], address >> 16);
 			m += append_utf8(&tb[m], address >> 8);
 			m += append_utf8(&tb[m], address);
-			tb[m++] = (char)UTF8_VIOL__4BIT;
+			if (quad)
+				tb[m++] = (char)UTF8_VIOL__4BIT;
 
 			budget = chip.write_page_size -
 					(address & (chip.write_page_size - 1));
@@ -703,6 +728,7 @@ no_print:
 			goto do_cmd;
 
 		case SEQ_ERASE1:
+
 			m = sprintf(tb, "%s", tx_cmd[0]);
 			tb[m++] = (char)UTF8_VIOL__CS_HILO;
 			m += append_utf8(&tb[m], NOR_CMD_WREN);
@@ -710,11 +736,16 @@ no_print:
 			m += append_utf8(&tb[m], NOR_CMD_CLSR);
 			tb[m++] = (char)UTF8_VIOL__CS_HILO;
 
-			m += append_utf8(&tb[m], NOR_CMD_SE);
+			if (chip.ads32) {
+				m += append_utf8(&tb[m], NOR_CMD_4SE);
+				m += append_utf8(&tb[m], address >> 24);
+			} else
+				m += append_utf8(&tb[m], NOR_CMD_SE);
 			m += append_utf8(&tb[m], address >> 16);
 			m += append_utf8(&tb[m], address >> 8);
 			m += append_utf8(&tb[m], address);
 
+			tb[m++] = (char)UTF8_VIOL__CS_HILO;
 			tb[m++] = (char)UTF8_VIOL__CS_HILO;
 			m += append_utf8(&tb[m], NOR_CMD_RDSR);
 			tb[m++] = (char)UTF8_VIOL__WAIT_FLASH_DONE;
@@ -751,6 +782,7 @@ static struct option options[] = {
 	{ "debug",	no_argument,		NULL, 'd' },
 	{ "verify",	no_argument,		NULL, 'v' },
 	{ "otp",	no_argument,		NULL, 'o' },
+	{ "quad",	no_argument, 		NULL, 'q' },
 	{ NULL, 0, 0, 0 }
 };
 
@@ -767,7 +799,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "LSGPIO LMP SPI NOR Programmer (C)2013 Linaro, Ltd\n");
 
 	while (n >= 0) {
-		n = getopt_long(argc, argv, "hndvo", options, NULL);
+		n = getopt_long(argc, argv, "hndvoq", options, NULL);
 		if (n < 0)
 			continue;
 		switch (n) {
@@ -783,12 +815,17 @@ int main(int argc, char *argv[])
 		case 'o':
 			otp = 1;
 			break;
+		case 'q':
+			quad = 1;
+			break;
 		case 'h':
 usage:
-			fprintf(stderr, "Usage: %s <LMP path> "
-				"[erase <start ofs> <len>]\n"
-				"[write <write file> <start ofs> [<len>]]\n"
-				"[read <read file> <start ofs> <len>]\n"
+			fprintf(stderr, "Usage: %s <LMP path> ["
+				"erase <start ofs> <len>\n"
+				"write <write file> <start ofs> [<len>]\n"
+				"read <read file> <start ofs> <len>\n"
+				"verify <compare file> <start ofs> <len>\n"
+				"[--verify] [--quad]"
 				"\n"
 				"For offset and length, you can give decimal,\n"
 				"hex like 0x100, or SI units like 4M/ 4G/ 4K\n"
@@ -819,6 +856,10 @@ usage:
 			_job = SEQ_WRITE1;
 		if (!strcmp(argv[optind], "erase"))
 			_job = SEQ_ERASE1;
+		if (!strcmp(argv[optind], "verify")) {
+			_job = SEQ_READ;
+			verify = 1;
+		}
 
 		if (_job == SEQ_COMPLETED) {
 			close(fd);
@@ -834,8 +875,9 @@ usage:
 		}
 		strncpy(filepath, argv[optind], sizeof(filepath));
 		filepath[sizeof(filepath) - 1] = '\0';
-		if (_job == SEQ_READ)
-			fd_file = open(argv[optind], O_WRONLY | O_CREAT, 0660);
+		if (_job == SEQ_READ && !verify)
+			fd_file = open(argv[optind],
+					O_WRONLY | O_CREAT | O_TRUNC, 0660);
 		else
 			fd_file = open(argv[optind], O_RDONLY);
 		if (fd_file < 0) {
@@ -854,7 +896,7 @@ usage:
 		_address = _atol(argv[optind]);
 		optind++;
 		if (optind >= argc) {
-			if (_job != SEQ_WRITE1) {
+			if (_job != SEQ_WRITE1 && (_job != SEQ_READ || !verify)) {
 				close(fd);
 				close(fd_file);
 				goto usage;
@@ -915,6 +957,11 @@ usage:
 			fprintf(stderr, "unable to reopen %s\n", filepath);
 			goto bail;
 		}
+		ret = perform(fd, SEQ_READ, _address, _length);
+	}
+
+	if (_job == SEQ_ERASE1 && verify) {
+		check_erased = 1;
 		ret = perform(fd, SEQ_READ, _address, _length);
 	}
 
